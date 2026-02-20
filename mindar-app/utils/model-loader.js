@@ -6,12 +6,14 @@ window.addEventListener('DOMContentLoaded', () => {
   if (!container) return;
 
   const loadUrl = (url) => {
+    console.log('attempting load of', url);
     const ext = url.split('.').pop().toLowerCase();
     let loader;
     if (ext === 'glb' || ext === 'gltf') loader = new THREE.GLTFLoader();
     else if (ext === 'fbx') loader = new THREE.FBXLoader();
-    if (!loader) return;
+    if (!loader) { console.warn('no loader for', ext); return; }
     loader.load(url, (g) => {
+      console.log('loader success for', url);
       container.setAttribute('visible','true');
         const obj = (ext === 'fbx' ? g : g.scene);
         // force materials to opaque in case opacity was zero
@@ -24,7 +26,7 @@ window.addEventListener('DOMContentLoaded', () => {
         });
         container.object3D.add(obj);
       fallback.setAttribute('visible','false');
-    }, undefined, () => { fallback.setAttribute('visible','true'); });
+    }, undefined, (err) => { console.error('loader error',err); fallback.setAttribute('visible','true'); });
   };
 
   // local upload handler
