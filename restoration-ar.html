@@ -405,7 +405,8 @@
     <!-- Start overlay -->
     <div id="start-overlay">
         <h1>EXPEAR RESTAURO</h1>
-        <p>Tocca per avviare la fotocamera e iniziare il restauro.</p>
+        <p>Tocca per avviare la fotocamera e iniziare il restauro.<br>
+        (per usare un solo marker aggiungi <code>?single=1</code> all'URL)</p>
         <button class="start-btn" id="start-ar-btn">AVVIA FOTOCAMERA</button>
         <p id="start-status"></p>
     </div>
@@ -557,6 +558,15 @@
                     window.log(msg, type);
                     if (startStatus) startStatus.textContent = msg;
                 };
+
+                // check for single-marker mode via query string
+                const params = new URLSearchParams(window.location.search);
+                if (params.has('single')) {
+                    // use only marker ID 1 and treat its size as something large
+                    engine._validMarkerIds = new Set([1]);
+                    engine.markerSizeMM = 150; // 15cm printed marker
+                    window.log('Single-marker mode: only ID 1 will be tracked', 'info');
+                }
 
                 await engine.init();
                 window.log('Engine pronto!');
