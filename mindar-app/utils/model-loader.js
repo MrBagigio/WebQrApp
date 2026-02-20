@@ -2,31 +2,40 @@
 window.addEventListener('DOMContentLoaded', () => {
   const container = document.getElementById('house-model');
   const fallback = document.getElementById('fallback-house');
+  const uploader = document.getElementById('model-upload');
   if (!container) return;
-  const path = 'assets/house';
-  const attemptLoad = (url) => {
+
+  const loadUrl = (url) => {
     const ext = url.split('.').pop().toLowerCase();
-    if (ext === 'glb' || ext === 'gltf') {
-      const loader = new THREE.GLTFLoader();
-      loader.load(url, (gltf) => {
-        container.setAttribute('visible','true');
-        container.object3D.add(gltf.scene);
-        fallback.setAttribute('visible','false');
-      }, undefined, () => { fallback.setAttribute('visible','true'); });
-    } else if (ext === 'fbx') {
-      const loader = new THREE.FBXLoader();
-      loader.load(url, (fbx) => {
-        container.setAttribute('visible','true');
-        container.object3D.add(fbx);
-        fallback.setAttribute('visible','false');
-      }, undefined, () => { fallback.setAttribute('visible','true'); });
-    } else {
-      fallback.setAttribute('visible','true');
-    }
+    let loader;
+    if (ext === 'glb' || ext === 'gltf') loader = new THREE.GLTFLoader();
+    else if (ext === 'fbx') loader = new THREE.FBXLoader();
+    if (!loader) return;
+    loader.load(url, (g) => {
+      container.setAttribute('visible','true');
+      container.object3D.add(ext === 'fbx' ? g : g.scene);
+      fallback.setAttribute('visible','false');
+    }, undefined, () => { fallback.setAttribute('visible','true'); });
   };
-  // try common extensions in order
+
+  // local upload handler
+  if (uploader) {
+    uploader.addEventListener('change', ev => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        const blobUrl = URL.createObjectURL(new Blob([e.target.result]));
+        loadUrl(blobUrl);
+      };
+      reader.readAsArrayBuffer(f);
+    });
+  }
+
+  // try static files too
+  const path = 'assets/house';
   ['glb','gltf','fbx'].forEach(ext => {
     const url = `${path}.${ext}`;
-    fetch(url, {method:'HEAD'}).then(r=>{if(r.ok) attemptLoad(url);});
+    fetch(url, {method:'HEAD'}).then(r=>{if(r.ok) loadUrl(url);});
   });
 });
