@@ -11,8 +11,14 @@
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <!-- loaders must match A-Frame's internal Three.js version (0.128) -->
-  <!-- fflate required by FBXLoader; 0.8.0 doesn’t exist on unpkg, fall back to 0.7.0 which matches our Three version -->
-  <script src="https://unpkg.com/fflate@0.7.0/umd/fflate.min.js"></script>
+  <!-- fflate required by FBXLoader; use the UMD build under umd/index.js (unpkg path differs) -->
+  <script src="https://unpkg.com/fflate@0.7.0/umd/index.js"></script>
+  <!-- local fallback in case CDN is blocked -->
+  <script>
+    if (typeof fflate === 'undefined') {
+      document.write('<script src="./lib/fflate.min.js"><\/script>');
+    }
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
   <!-- only load the model loader once below (with cache‑busting query) -->
