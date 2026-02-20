@@ -1,0 +1,73 @@
+const { test, expect } = require('@playwright/test');
+
+test.describe('ExpeAR Pro - Perfection Suite V9', () => {
+    const URL = 'http://localhost:8001';
+
+    test('Startup, I18n and Flow Persistence', async ({ page }) => {
+        await page.goto(URL);
+
+        // Check I18n Title
+        const title = page.locator('.hero-title');
+        await expect(title).toHaveText(/ExpeAR Pro/);
+
+        // Flow: Start -> Narrator -> Game
+        await page.click('#start-btn');
+        await expect(page.locator('#narrator-intro')).toBeVisible();
+
+        // Skip Narrator (New feature V9)
+        const skipBtn = page.locator('#narrator-skip');
+        if (await skipBtn.isVisible()) {
+            await skipBtn.click();
+        } else {
+            await page.click('#narrator-next');
+        }
+
+        // Check HUD
+        await expect(page.locator('#game-ui')).toBeVisible();
+        await expect(page.locator('#poi-found')).toHaveText('0');
+    });
+
+    test('Perfection: Rank and Progress i18n', async ({ page }) => {
+        await page.goto(URL);
+        await page.evaluate(() => {
+            localStorage.setItem('expear_discovered', JSON.stringify([0]));
+        });
+        await page.reload();
+
+        await page.click('#start-btn');
+        await page.click('#narrator-next');
+
+        // Verify Rank i18n (Should be EXPERT in EN or ESPERTO in IT)
+        const rank = await page.locator('#explorer-rank').textContent();
+        expect(['ESPERTO', 'EXPERT']).toContain(rank);
+    });
+
+    test('AR Logic: Discovery creates achievement and rank changes', async ({ page }) => {
+        await page.goto(URL);
+        await page.click('#start-btn');
+        await page.click('#narrator-next');
+
+        // Simulate discovery directly
+        await page.evaluate(() => window.Zenith.openCard('0'));
+
+        // Achievement stack should show an entry
+        await expect(page.locator('#achievement-system .achievement-popup')).toHaveCount(1);
+
+        // Rank should update textually
+        const rank = await page.locator('#explorer-rank').textContent();
+        expect(rank.length).toBeGreaterThan(0);
+    });
+
+    test('Share discovery fallback copies link and shows notification', async ({ page }) => {
+        await page.goto(URL);
+        await page.click('#start-btn');
+        await page.click('#narrator-next');
+
+        // Open card and click share (will use fallback copy if Web Share not available in test env)
+        await page.evaluate(() => window.Zenith.openCard('1'));
+        await page.click('#share-discovery');
+
+        // Notification should appear
+        await expect(page.locator('.notif')).toBeVisible();
+    });
+});

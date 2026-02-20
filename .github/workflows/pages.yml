@@ -1,0 +1,30 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # If you have a build step (e.g. webpack, rollup, etc), run it here.
+      # For this static project no build is required, but you can uncomment
+      # and customize the commands if needed.
+      # - name: Build
+      #   run: |
+      #     npm ci
+      #     npm run build
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v1
+        with:
+          # The folder to deploy; use './' for root or 'docs/' if you maintain
+          # a docs directory. Adjust if you add a build step that outputs into a
+          # different directory.
+          folder: '.'
