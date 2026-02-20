@@ -20,12 +20,14 @@ window.addEventListener('DOMContentLoaded', () => {
         const box = new THREE.Box3().setFromObject(obj);
         const size = new THREE.Vector3(); box.getSize(size);
         console.log('model bbox size', size);
-        // automatically scale model so largest dimension ~0.4m
+        // automatically scale model so largest dimension ~0.8m (make the house bigger)
         const maxd = Math.max(size.x, size.y, size.z);
         if (maxd > 0) {
-          const factor = 0.4 / maxd;
+          // multiplier can be changed later if further size tuning required
+          const targetSize = 0.8;
+          const factor = targetSize / maxd;
           obj.scale.setScalar(factor);
-          console.log('scaling model by', factor);
+          console.log('scaling model by', factor, '(target', targetSize, 'm)');
         }
         obj.traverse(o => {
           if (o.isMesh && o.material) {
@@ -55,7 +57,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // try static files too, but perform HEAD first so we can detect a missing web server
   const tryStatic = () => {
-    const path = './assets/house';
+    const path = './assets/house'; // base path for static model (keep unchanged for compatibility)
     let pending = 0;
     let found = false;
     let connRefused = false;
