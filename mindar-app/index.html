@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindAR QR House Demo</title>
+
+  <!-- A-Frame + MindAR -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
+</head>
+<body>
+  <div id="hint">Questo demo visualizza un modello 3D sulla tua immagine QR. Carica un file
+    <code>assets/house.glb</code> e punta la camera sul target definito in
+    <code>assets/targets.mind</code>.</div>
+
+  <a-scene mindar-image="imageTargetSrc: assets/targets.mind; uiScanning: yes;" 
+            color-space="sRGB" 
+            renderer="antialias: true;" 
+            vr-mode-ui="enabled: false" 
+            device-orientation-permission-ui="enabled: false">
+
+    <!-- camera required by A-Frame -->
+    <a-camera position="0 0 0"></a-camera>
+
+    <!-- tag target 栈 -->
+    <a-entity mindar-image-target="targetIndex: 0">
+      <!-- placeholder model; drop your GLB here -->
+      <a-entity gltf-model="assets/house.glb" scale="0.1 0.1 0.1" rotation="0 180 0"></a-entity>
+    </a-entity>
+
+  </a-scene>
+</body>
+</html>
