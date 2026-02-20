@@ -8,8 +8,9 @@
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/FBXLoader.js"></script>
+  <!-- loaders must match A-Frame's internal Three.js version (0.128) -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
   <script src="utils/model-loader.js"></script>
 
   <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
