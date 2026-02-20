@@ -18,6 +18,11 @@
   <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
 </head>
 <body>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+    }
+  </script>
   <div id="hint">Questo demo visualizza un modello 3D sulla tua immagine QR.<br>
     Puoi caricare una casetta in formato <code>.glb</code>, <code>.gltf</code> o <code>.fbx</code> qui:
     <input id="model-upload" type="file" accept=".glb,.gltf,.fbx" style="margin-top:6px;">
