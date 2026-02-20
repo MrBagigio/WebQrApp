@@ -193,15 +193,22 @@ function processFrame(msg) {
     const addDet = (arr, src) => {
         for (const t of arr) {
             const id = Number(t.id);
-            if (!Number.isFinite(id) || !validMarkerIds.has(id)) continue;
+            if (!Number.isFinite(id)) continue; // Removed validMarkerIds check to allow debug of other markers
             const corners = (t.corners || []).map(c => ({ x: c.x || c[0], y: c.y || c[1] }));
             if (!corners || corners.length < 4) continue;
-            if (!merged.has(id)) merged.set(id, { id, corners, sources: new Set([src]) });
-            else {
-                const e = merged.get(id);
-                e.sources.add(src);
-                // prefer apriltag corners if present
-                if (src === 'apriltag') e.corners = corners;
+            if (src === 'apriltag') {
+                if (!merged.has(id)) merged.set(id, { id, corners, sources: new Set([src]) });
+                else {
+                    const e = merged.get(id);
+                    e.sources.add(src);
+                    e.corners = corners; // prefer AprilTag corners
+                }
+            } else {
+                if (!merged.has(id)) merged.set(id, { id, corners, sources: new Set([src]) });
+                else {
+                    const e = merged.get(id);
+                    e.sources.add(src);
+                }
             }
         }
     };
@@ -216,7 +223,7 @@ function processFrame(msg) {
     const usedLength = (typeof msg.markerLength === 'number') ? msg.markerLength : markerLength;
 
     for (const m of detected) {
-        if (!validMarkerIds.has(Number(m.id))) continue;
+        // if (!validMarkerIds.has(Number(m.id))) continue; // Removed filtering to allow main thread to decide
         if (!m.corners || m.corners.length < 4) continue;
 
         // Optional: refine corners by template-based optical flow using previous frame

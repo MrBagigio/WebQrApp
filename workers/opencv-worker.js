@@ -92,12 +92,16 @@ self.onmessage = async (e) => {
           }
 
           if (cv.aruco.getPredefinedDictionary) {
+            // Priority: ARUCO_ORIGINAL (matches js-aruco2) -> 5x5_1000 -> 4x4_1000
             if (typeof cv.aruco.DICT_ARUCO_ORIGINAL !== 'undefined') {
               dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL);
-              postMessage({ type: 'log', message: 'Pronto per la scansione (DICT_ARUCO_ORIGINAL).' });
+              postMessage({ type: 'log', message: 'OpenCV: DICT_ARUCO_ORIGINAL loaded (consistent with js-aruco2).' });
             } else if (typeof cv.aruco.DICT_5X5_1000 !== 'undefined') {
               dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_5X5_1000);
-              postMessage({ type: 'log', message: 'Pronto per la scansione (DICT_5X5_1000 fallback).' });
+              postMessage({ type: 'log', message: 'OpenCV: DICT_5X5_1000 loaded (fallback).' });
+            } else if (typeof cv.aruco.DICT_4X4_1000 !== 'undefined') {
+                dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_1000);
+                postMessage({ type: 'log', message: 'OpenCV: DICT_4X4_1000 loaded (fallback).' });
             } else {
               throw new Error('Nessun dizionario ARUCO compatibile disponibile.');
             }

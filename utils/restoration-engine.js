@@ -299,43 +299,49 @@ export class RestorationEngine {
     _estimateFocal() {
         if (!this.video || !this.overlay) return;
         const w = this.overlay.width || 0;
-        const h = this.overlay.height || 0;
-        const isIPhone = /iPhone/i.test(navigator.userAgent || '');
+        // height not needed for horizontal focal estimation
+        
+        // 1. Try to get hardware FOV
+        let estimated = this._getHardwareFocal(w);
 
-        let estimated = 0;
-        try {
-            const track = this.video.srcObject?.getVideoTracks()[0];
-            if (track) {
-                const settings = track.getSettings ? track.getSettings() : {};
-                const facingMode = settings?.facingMode || '';
-                let hFov = Number(settings?.fov);
-
-                if (!Number.isFinite(hFov) || hFov < 20 || hFov > 140) {
-                    if (isIPhone && facingMode === 'environment') {
-                        // iPhone 13 Pro wide camera approximation
-                        hFov = 69;
-                    } else if (facingMode === 'environment') {
-                        hFov = 67;
-                    } else {
-                        hFov = 60;
-                    }
-                }
-
-                estimated = (w / 2) / Math.tan((hFov * Math.PI / 180) / 2);
-            }
-        } catch (e) { this.log('FOV detect: ' + e.message, 'warn'); }
-
+        // 2. Fallback if hardware FOV failed
         if (!estimated || estimated < 100) {
+            const isIPhone = /iPhone/i.test(navigator.userAgent || '');
             // Fallback tuned for mobile rear cameras; previous 0.9*max() was too high in portrait.
             estimated = w * (isIPhone ? 0.73 : 0.78);
         }
 
-        // Keep in a plausible range for mobile intrinsics to avoid extreme depth/scale drift.
+        // 3. Clamp to plausible range
         const minF = Math.max(100, w * 0.55);
         const maxF = Math.max(minF + 1, w * 1.4);
         this.focal = Math.max(minF, Math.min(maxF, estimated));
 
         this.log(`Focale stimata: ${Math.round(this.focal)} px`);
+    }
+
+    _getHardwareFocal(width) {
+        try {
+            const track = this.video.srcObject?.getVideoTracks()[0];
+            if (!track) return 0;
+            
+            const settings = track.getSettings ? track.getSettings() : {};
+            let hFov = Number(settings.fov);
+            const facingMode = settings.facingMode || '';
+            const isIPhone = /iPhone/i.test(navigator.userAgent || '');
+
+            if (!Number.isFinite(hFov) || hFov < 20 || hFov > 140) {
+                // Heuristics based on device type
+                if (facingMode === 'environment') {
+                    hFov = isIPhone ? 69 : 67; 
+                } else {
+                    hFov = 60; // Default wide
+                }
+            }
+            return (width / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+        } catch (e) {
+            this.log('FOV detect: ' + e.message, 'warn');
+            return 0;
+        }
     }
 
     // Alias for the UI calibrate button
@@ -718,79 +724,80 @@ export class RestorationEngine {
 
     // Apply preset tuned for a camera/device
     applyStabilityPreset(name = 'default') {
-        switch (name) {
-            case 'minimal':
-                this.setFilterParams({ positionSmoothing: 0.10, rotationTimeConstant: 0.085 });
-                this.setPositionHistorySize(1);
-                this.setMaxPositionJump(0.25);
-                this.setMinMarkerPerimeter(30);
-                this.setAnchorBoost(1.0);
-                this.setUseQuaternionEKF(false);
-                this.setAnchorIds(null);
-                this.setAnchorAutoLockEnabled(false);
-                this.clearAnchorLock({ persist: true });
-                this.setAnchorLockEnabled(false);
-                try { this.setCornerSmoothing(0.0); } catch (e) { /* ignore */ }
-                try { this.setCornerFlowEnabled(false); } catch (e) { /* ignore */ }
-                try { this.setUseSubpixel(false); } catch (e) { /* ignore */ }
-                try { this.setUseAprilTag(false); } catch (e) { /* ignore */ }
-                try { this.setUseSolvePnP(false); } catch (e) { /* ignore */ }
-                try { this.setUsePyrLKFlow(false); } catch (e) { /* ignore */ }
-                try { this.setMarkerOutlierDistanceMeters(0.25); } catch (e) { /* ignore */ }
-                try { this.setMarkerConfidenceThreshold(0.15); } catch (e) { /* ignore */ }
-                this.updateDetectionFps(20);
-                this.log('Stability preset applied: minimal');
-                break;
-            case 'iphone13pro':
-            case 'mobile':
-                // === BOARD-TUNED: Stable multi-marker tracking for flat A4 board ===
-                // Filters: moderate smoothing to absorb per-marker jitter
-                this.setFilterParams({ positionSmoothing: 0.12, rotationTimeConstant: 0.10 });
-                // Position history: 3 = light median filtering to kill spikes
-                this.setPositionHistorySize(3);
-                // Jump clamp: moderate to allow movement but reject outliers
-                this.setMaxPositionJump(0.3);
-                this.setMinMarkerPerimeter(30);
-                this.setAnchorBoost(2.5);
-                this.setUseQuaternionEKF(false); // EKF adds latency on mobile
-                this.setAnchorIds(null);
+        const presets = {
+            minimal: {
+                filter: { positionSmoothing: 0.10, rotationTimeConstant: 0.085 },
+                posHist: 1, maxJump: 0.25, minPeri: 30, anchorBoost: 1.0,
+                ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
+                fps: 20,
+                worker: {
+                    cornerSmooth: 0.0, flow: false, subpix: false,
+                    apriltag: false, pnp: false, lk: false,
+                    outlier: 0.25, conf: 0.15
+                }
+            },
+            mobile: {
+                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.10 },
+                posHist: 3, maxJump: 0.3, minPeri: 30, anchorBoost: 2.5,
+                ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
+                fps: 60,
+                worker: {
+                    cornerSmooth: 0.3, flow: true, flowSSD: 40,
+                    subpix: true, subpixParams: { win: 3, maxIter: 15, eps: 0.1 },
+                    apriltag: true, pnp: true, lk: true,
+                    outlier: 0.4, conf: 0.15
+                }
+            },
+            desktop: {
+                filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.05 },
+                posHist: 1, maxJump: 0.5, minPeri: 25,
+                ekf: false, autoLock: false, clearLock: true,
+                fps: 60,
+                worker: {}
+            }
+        };
+        // Aliases
+        presets.iphone13pro = presets.mobile;
 
-                // === CRITICAL: Disable auto anchor-lock (this was freezing the model!) ===
-                this.setAnchorAutoLockEnabled(false);
-                this.clearAnchorLock({ persist: true });
-                this.setAnchorLockEnabled(false);
-
-                // Worker-side: keep smoothing LOW to reduce latency
-                try { this.setCornerSmoothing(0.3); } catch (e) { /* ignore */ }
-                try { this.setCornerFlowEnabled(true); } catch (e) { /* ignore */ }
-                try { this.setCornerFlowSSDThreshold(40); } catch (e) { /* ignore */ }
-                // Sub-pixel refinement helps accuracy without adding much latency
-                try { this.setUseSubpixel(true); this.setSubpixelParams({ win: 3, maxIter: 15, eps: 0.1 }); } catch (e) { /* ignore */ }
-                try { this.setUseAprilTag(true); } catch (e) { /* ignore */ }
-                try { this.setUseSolvePnP(true); } catch (e) { /* ignore */ }
-                try { this.setUsePyrLKFlow(true); } catch (e) { /* ignore */ }
-                try { this.setMarkerOutlierDistanceMeters(0.4); } catch (e) { /* ignore */ }
-                try { this.setMarkerConfidenceThreshold(0.15); } catch (e) { /* ignore */ }
-
-                // Detection FPS: slightly higher for smoother updates while orbiting
-                this.updateDetectionFps(60);
-
-                this.log('Stability preset applied: ' + name + ' (AAA-tuned: responsive tracking)');
-                break;
-            case 'desktop':
-                this.setFilterParams({ positionSmoothing: 0.05, rotationTimeConstant: 0.05 });
-                this.setPositionHistorySize(1);
-                this.setMaxPositionJump(0.5);
-                this.setMinMarkerPerimeter(25);
-                this.setUseQuaternionEKF(false);
-                this.setAnchorAutoLockEnabled(false);
-                this.clearAnchorLock({ persist: true });
-                this.updateDetectionFps(60);
-                this.log('Stability preset applied: desktop');
-                break;
-            default:
-                this.log('Unknown preset: ' + name, 'warn');
+        const p = presets[name];
+        if (!p) {
+            this.log('Unknown preset: ' + name, 'warn');
+            return;
         }
+
+        // Apply
+        if (p.filter) this.setFilterParams(p.filter);
+        if (p.posHist !== undefined) this.setPositionHistorySize(p.posHist);
+        if (p.maxJump !== undefined) this.setMaxPositionJump(p.maxJump);
+        if (p.minPeri !== undefined) this.setMinMarkerPerimeter(p.minPeri);
+        if (p.anchorBoost !== undefined) this.setAnchorBoost(p.anchorBoost);
+        if (p.ekf !== undefined) this.setUseQuaternionEKF(p.ekf);
+        if (p.anchorIds !== undefined) this.setAnchorIds(p.anchorIds);
+        
+        if (p.autoLock !== undefined) this.setAnchorAutoLockEnabled(p.autoLock);
+        if (p.clearLock) this.clearAnchorLock({ persist: true });
+        if (p.lockEnabled !== undefined) this.setAnchorLockEnabled(p.lockEnabled);
+        
+        if (p.fps) this.updateDetectionFps(p.fps);
+
+        // Worker configs (safely applied)
+        const w = p.worker || {};
+        try {
+            if (w.cornerSmooth !== undefined) this.setCornerSmoothing(w.cornerSmooth);
+            if (w.flow !== undefined) this.setCornerFlowEnabled(w.flow);
+            if (w.flowSSD !== undefined) this.setCornerFlowSSDThreshold(w.flowSSD);
+            if (w.subpix !== undefined) {
+                this.setUseSubpixel(w.subpix);
+                if (w.subpixParams) this.setSubpixelParams(w.subpixParams);
+            }
+            if (w.apriltag !== undefined) this.setUseAprilTag(w.apriltag);
+            if (w.pnp !== undefined) this.setUseSolvePnP(w.pnp);
+            if (w.lk !== undefined) this.setUsePyrLKFlow(w.lk);
+            if (w.outlier !== undefined) this.setMarkerOutlierDistanceMeters(w.outlier);
+            if (w.conf !== undefined) this.setMarkerConfidenceThreshold(w.conf);
+        } catch (e) { /* ignore worker config errors if methods missing */ }
+
+        this.log(`Stability preset applied: ${name}`);
     }
 
     // Utility: compute polygon perimeter (px) from corners array [[x,y],...]
@@ -807,22 +814,33 @@ export class RestorationEngine {
     setFilterParams({ positionSmoothing, rotationTimeConstant } = {}) {
         if (typeof positionSmoothing === 'number') {
             // Map smoothing value to responsiveness: lower smoothing = higher responsiveness
-            const responsiveness = Math.max(0.5, Math.min(0.98, 1.0 - positionSmoothing));
-            this.posFilter = new PoseFilters.PredictivePositionFilter({
-                responsiveness: responsiveness,
-                velocitySmoothing: 0.25,      // smoother velocity estimation for board setup
-                predictionFactor: 0.2,         // conservative prediction to reduce inter-frame drift
-                maxVelocity: 1.0,              // real camera movement is slow; reject fast spikes
-                maxPredictionDt: 0.033,
-                maxPredictionStep: 0.015,
-                velocityDamping: 0.9,
-                positionDeadband: 0.0015
-            });
-            this.log(`Position filter reset: responsiveness=${responsiveness.toFixed(3)} (PredictivePositionFilter)`);
+            const responsiveness = Math.max(0.02, Math.min(0.99, 1.0 - positionSmoothing));
+            
+            if (this.posFilter && this.posFilter.responsiveness !== undefined) {
+                this.posFilter.responsiveness = responsiveness;
+                this.log(`Position filter updated: responsiveness=${responsiveness.toFixed(3)}`);
+            } else {
+                this.posFilter = new PoseFilters.PredictivePositionFilter({
+                    responsiveness: responsiveness,
+                    velocitySmoothing: 0.25,      // smoother velocity estimation for board setup
+                    predictionFactor: 0.2,         // conservative prediction to reduce inter-frame drift
+                    maxVelocity: 1.0,              // real camera movement is slow; reject fast spikes
+                    maxPredictionDt: 0.033,
+                    maxPredictionStep: 0.015,
+                    velocityDamping: 0.9,
+                    positionDeadband: 0.0015
+                });
+                this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)}`);
+            }
         }
         if (typeof rotationTimeConstant === 'number') {
-            this.quatFilter = new PoseFilters.QuaternionFilter({ timeConstant: rotationTimeConstant });
-            this.log(`Rotation timeConstant set: ${rotationTimeConstant}`);
+            if (this.quatFilter && this.quatFilter.timeConstant !== undefined) {
+                this.quatFilter.timeConstant = rotationTimeConstant;
+                this.log(`Rotation filter updated: tau=${rotationTimeConstant.toFixed(3)}`);
+            } else {
+                this.quatFilter = new PoseFilters.QuaternionFilter({ timeConstant: rotationTimeConstant });
+                this.log(`Rotation timeConstant set: ${rotationTimeConstant}`);
+            }
         }
     }
 
@@ -1277,7 +1295,16 @@ export class RestorationEngine {
         this.worker = new Worker('workers/aruco-worker.js');
         this.worker.postMessage({ type: 'init', markerLength: this.markerSizeMM / 1000 });
         // sync worker-side config
-        try { this.worker.postMessage({ type: 'config', cornerSmoothing: 0, cornerFlowEnabled: false, useSolvePnP: !!this._useSolvePnP, usePyrLKFlow: !!this._usePyrLKFlow }); } catch (e) { /* ignore */ }
+        try { 
+            this.worker.postMessage({ 
+                type: 'config', 
+                cornerSmoothing: 0, 
+                cornerFlowEnabled: false, 
+                useSolvePnP: !!this._useSolvePnP, 
+                usePyrLKFlow: !!this._usePyrLKFlow,
+                useAprilTag: true  // Enable AprilTag support if available
+            }); 
+        } catch (e) { /* ignore */ }
 
         this._workerReady = false;
         this.worker.onmessage = (e) => {
@@ -1339,11 +1366,15 @@ export class RestorationEngine {
     _handleTrackingResult(data) {
         const statusEl = document.getElementById('tracking-status');
         const now = performance.now();
-        const markers = (data.markers || []).filter(m => this._validMarkerIds.has(Number(m.id)));
+        
+        // Use all detected markers for debug/overlay, but filter for pose estimation
+        const rawMarkers = data.markers || [];
+        const validMarkers = rawMarkers.filter(m => this._validMarkerIds.has(Number(m.id)));
 
-        // Keep a copy for UI / debug
-        this._lastRawMarkers = markers.map(m => ({
+        // Keep a copy for UI / debug (all markers, with validity flag)
+        this._lastRawMarkers = rawMarkers.map(m => ({
             id: m.id,
+            isValid: this._validMarkerIds.has(Number(m.id)),
             corners: m.corners,
             rvec: m.rvec ? m.rvec.slice() : null,
             tvec: m.tvec ? m.tvec.slice() : null,
@@ -1354,9 +1385,11 @@ export class RestorationEngine {
             cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
         }));
 
-        if (markers.length > 0) this._drawMarkerOverlay(markers);
+        if (this._debugOverlayEnabled && rawMarkers.length > 0) {
+            this._drawMarkerOverlay(this._lastRawMarkers);
+        }
 
-        const poseful = markers.filter(m => m.rvec && m.tvec);
+        const poseful = validMarkers.filter(m => m.rvec && m.tvec);
         if (poseful.length > 0) {
             this._applyTrackedPose(poseful, statusEl, now);
             return;
@@ -1416,6 +1449,36 @@ export class RestorationEngine {
      *        • Unlock if markers indicate large displacement (user moved board).
      *   Result: rock-solid model the user can orbit freely.
      */
+    _calculateAdaptiveParameters(aggregateNoise) {
+        // Base values
+        const baseTrackWindow = Math.max(0.08, this._fusionTrackWindow || 0.24);
+        const baseOutlierDist = Math.max(0.08, this._markerOutlierDistance || 0.35);
+        const baseConfidenceThreshold = Math.max(0.01, this._markerConfidenceThreshold || 0.15);
+        const baseSoftLimitDeg = Math.max(45, this._obliqueSoftLimitDeg || 70);
+        const baseRejectDeg = Math.max(65, this._obliqueRejectAngleDeg || 84);
+
+        if (!this._adaptiveTuningEnabled) {
+            return {
+                adaptiveTrackWindow: baseTrackWindow,
+                adaptiveOutlierDistance: baseOutlierDist,
+                adaptiveConfidenceThreshold: baseConfidenceThreshold,
+                adaptiveObliqueSoftLimitDeg: baseSoftLimitDeg,
+                adaptiveObliqueRejectDeg: baseRejectDeg
+            };
+        }
+
+        // Adaptive scaling based on noise/view conditions
+        return {
+            adaptiveTrackWindow: Math.max(0.12, Math.min(0.46, baseTrackWindow * (1 + aggregateNoise * 0.45))),
+            adaptiveOutlierDistance: Math.max(0.18, Math.min(0.52, baseOutlierDist * (1 - aggregateNoise * 0.18))),
+            adaptiveConfidenceThreshold: Math.max(0.08, Math.min(0.42,
+                baseConfidenceThreshold + (aggregateNoise * 0.08) + (this._viewAngleEMA > 66 ? 0.02 : 0)
+            )),
+            adaptiveObliqueSoftLimitDeg: Math.max(56, Math.min(76, baseSoftLimitDeg - aggregateNoise * 8.0)),
+            adaptiveObliqueRejectDeg: Math.max(72, Math.min(88, baseRejectDeg - aggregateNoise * 6.5))
+        };
+    }
+
     _applyTrackedPose(poseful, statusEl, now) {
         const measDt = this._lastPoseMeasurementTime > 0
             ? Math.max(1 / 240, (now - this._lastPoseMeasurementTime) / 1000)
@@ -1425,32 +1488,20 @@ export class RestorationEngine {
         this._lastTrackingTime = now;
         this._framesWithoutDetection = 0;
 
-        const baseTrackWindow = Math.max(0.08, this._fusionTrackWindow || 0.24);
-        const baseOutlierDist = Math.max(0.08, this._markerOutlierDistance || 0.35);
-        const baseConfidenceThreshold = Math.max(0.01, this._markerConfidenceThreshold || 0.15);
-        const baseSoftLimitDeg = Math.max(45, this._obliqueSoftLimitDeg || 70);
-        const baseRejectDeg = Math.max(65, this._obliqueRejectAngleDeg || 84);
-
+        // Calculate noise metrics
         const confNoise = Math.max(0, 1 - this._measurementConfidenceEMA);
         const spreadNoise = Math.max(0, Math.min(1.2, this._poolSpreadEMA / 0.055));
         const viewNoise = Math.max(0, Math.min(1.1, this._viewAngleEMA / 80));
         const aggregateNoise = Math.max(0, Math.min(1.35, confNoise * 0.60 + spreadNoise * 0.30 + viewNoise * 0.10));
 
-        let adaptiveTrackWindow = baseTrackWindow;
-        let adaptiveOutlierDistance = baseOutlierDist;
-        let adaptiveConfidenceThreshold = baseConfidenceThreshold;
-        let adaptiveObliqueSoftLimitDeg = baseSoftLimitDeg;
-        let adaptiveObliqueRejectDeg = baseRejectDeg;
-
-        if (this._adaptiveTuningEnabled) {
-            adaptiveTrackWindow = Math.max(0.12, Math.min(0.46, baseTrackWindow * (1 + aggregateNoise * 0.45)));
-            adaptiveOutlierDistance = Math.max(0.18, Math.min(0.52, baseOutlierDist * (1 - aggregateNoise * 0.18)));
-            adaptiveConfidenceThreshold = Math.max(0.08, Math.min(0.42,
-                baseConfidenceThreshold + (aggregateNoise * 0.08) + (this._viewAngleEMA > 66 ? 0.02 : 0)
-            ));
-            adaptiveObliqueSoftLimitDeg = Math.max(56, Math.min(76, baseSoftLimitDeg - aggregateNoise * 8.0));
-            adaptiveObliqueRejectDeg = Math.max(72, Math.min(88, baseRejectDeg - aggregateNoise * 6.5));
-        }
+        // Get adaptive or static thresholds
+        const {
+            adaptiveTrackWindow,
+            adaptiveOutlierDistance,
+            adaptiveConfidenceThreshold,
+            adaptiveObliqueSoftLimitDeg,
+            adaptiveObliqueRejectDeg
+        } = this._calculateAdaptiveParameters(aggregateNoise);
 
         // ── Step 1: Compute house-centre pose from each detected marker ──
         const referencePosForGate = this._hasFirstPose
@@ -1928,77 +1979,57 @@ export class RestorationEngine {
         for (const m of markers) {
             const c = m.corners;
             if (!c || c.length < 4) continue;
-            const color = palette[m.id % palette.length];
+            
+            // Check isValid property if available (added in recent update) or default to checking valid IDs
+            const isValid = (typeof m.isValid === 'boolean') ? m.isValid : this._validMarkerIds.has(Number(m.id));
+            const color = isValid ? palette[m.id % palette.length] : '#ff0033'; // Red for invalid
 
             // Polygon outline
             ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
+            ctx.lineWidth = isValid ? 3 : 2;
+            if (!isValid) ctx.setLineDash([5, 5]); // Dashed for invalid
+            else ctx.setLineDash([]);
+            
             ctx.lineJoin = 'round';
             ctx.beginPath();
             ctx.moveTo(c[0][0], c[0][1]);
             for (let i = 1; i < c.length; i++) ctx.lineTo(c[i][0], c[i][1]);
             ctx.closePath();
             ctx.stroke();
+            ctx.setLineDash([]); // Reset
 
-            // Corner dots
-            for (let i = 0; i < c.length; i++) {
-                ctx.fillStyle = i === 0 ? '#ff0000' : color;
-                ctx.beginPath();
-                ctx.arc(c[i][0], c[i][1], i === 0 ? 6 : 4, 0, Math.PI * 2);
-                ctx.fill();
+            // Corner dots and label
+            if (isValid) {
+                for (let i = 0; i < c.length; i++) {
+                    ctx.fillStyle = (i === 0) ? '#ff0000' : color;
+                    ctx.beginPath(); ctx.arc(c[i][0], c[i][1], 2, 0, Math.PI * 2); ctx.fill();
+                }
             }
 
-            // ID + face label at centre
+            // ID Label
             const cx = (c[0][0] + c[2][0]) / 2;
             const cy = (c[0][1] + c[2][1]) / 2;
-            const label = markerLabels[m.id] || `ID ${m.id}`;
-            ctx.font = 'bold 12px monospace';
-
-            // Background label
+            
+            ctx.font = isValid ? 'bold 12px monospace' : '10px monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
+            const label = (markerLabels[m.id] || '') + ' #' + m.id + (isValid ? '' : ' ERR');
+            
             ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(cx - 30, cy - 18, 60, 36);
+            const metrics = ctx.measureText(label);
+            ctx.fillRect(cx - metrics.width/2 - 2, cy - 8, metrics.width + 4, 16);
+            
+            ctx.fillStyle = isValid ? '#ffffff' : '#ffcccc';
+            ctx.fillText(label, cx, cy);
 
-            // ID / face
-            ctx.fillStyle = color;
-            ctx.fillText(label, cx, cy - 6);
-
-            // Distance (if pose available) and poseError
-            if (m.tvec && m.tvec.length === 3) {
+            // Add distance for valid markers 
+            if (isValid && m.tvec && m.tvec.length === 3) {
                 const dist = Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]);
-                ctx.fillStyle = '#fff';
-                ctx.font = '12px monospace';
-                ctx.fillText(dist.toFixed(2) + ' m', cx, cy + 6);
-            } else {
                 ctx.fillStyle = '#ddd';
-                ctx.font = '11px monospace';
-                ctx.fillText('no pose', cx, cy + 6);
-            }
-
-            if (typeof m.poseError === 'number') {
-                ctx.fillStyle = 'rgba(255,255,255,0.85)';
                 ctx.font = '10px monospace';
-                ctx.fillText('err:' + (m.poseError || 0).toFixed(2), cx, cy + 18);
+                ctx.fillText(dist.toFixed(2) + ' m', cx, cy + 12);
             }
-
-            if (m.source || typeof m.confidence === 'number') {
-                ctx.fillStyle = 'rgba(255,255,255,0.85)';
-                ctx.font = '10px monospace';
-                const src = m.source ? String(m.source).toUpperCase() : 'UNK';
-                const confText = (typeof m.confidence === 'number') ? (' ' + m.confidence.toFixed(2)) : '';
-                ctx.fillText(src + confText, cx, cy + 28);
-            }
-
-            if (Number.isFinite(m.cameraAngleDeg)) {
-                ctx.fillStyle = 'rgba(255,255,255,0.85)';
-                ctx.font = '10px monospace';
-                ctx.fillText('ang:' + Math.round(m.cameraAngleDeg) + '°', cx, cy + 38);
-            }
-
         }
-
-        this._drawDebugHud();
     }
 
     _drawDebugHud() {
