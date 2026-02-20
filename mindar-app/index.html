@@ -8,6 +8,9 @@
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/FBXLoader.js"></script>
+  <script src="utils/model-loader.js"></script>
 
   <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
 </head>
@@ -29,9 +32,9 @@
 
     <!-- tag target 栈 -->
     <a-entity mindar-image-target="targetIndex: 0">
-      <!-- house model; use your own GLB here -->
-      <a-entity id="house-model" gltf-model="assets/house.glb" scale="0.1 0.1 0.1" rotation="0 180 0"></a-entity>
-      <!-- simple fallback house if GLB missing -->
+      <!-- house placeholder; script will load GLB or FBX here -->
+      <a-entity id="house-model" scale="0.1 0.1 0.1" rotation="0 180 0"></a-entity>
+      <!-- simple fallback house if no model found -->
       <a-group id="fallback-house" visible="true">
         <a-box depth="0.5" height="0.3" width="0.5" color="#8B4513" position="0 0.15 0"></a-box>
         <a-cone height="0.3" radius-bottom="0.4" radius-top="0" color="#A52A2A" position="0 0.45 0"></a-cone>
