@@ -45,6 +45,10 @@ window.addEventListener('DOMContentLoaded', () => {
   const path = 'assets/house';
   ['glb','gltf','fbx'].forEach(ext => {
     const url = `${path}.${ext}`;
-    fetch(url, {method:'HEAD'}).then(r=>{if(r.ok) loadUrl(url);});
+    console.log('checking static url', url);
+    fetch(url, {method:'HEAD'}).then(r=>{
+      console.log('HEAD', url, r.status);
+      if(r.ok) loadUrl(url);
+    }).catch(e=>console.warn('HEAD error',url,e));
   });
 });
