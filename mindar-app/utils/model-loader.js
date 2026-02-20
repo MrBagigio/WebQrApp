@@ -20,11 +20,17 @@ window.addEventListener('DOMContentLoaded', () => {
         const box = new THREE.Box3().setFromObject(obj);
         const size = new THREE.Vector3(); box.getSize(size);
         console.log('model bbox size', size);
-        // automatically scale model so largest dimension ~0.8m (make the house bigger)
+        // center the model geometry at origin so it sits nicely on the QR
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        console.log('centering model by', center);
+        obj.position.sub(center);
+        // automatically scale model so largest dimension ~1.5m (bigger for visibility)
         const maxd = Math.max(size.x, size.y, size.z);
         if (maxd > 0) {
-          // multiplier can be changed later if further size tuning required
-          const targetSize = 0.8;
+          // global multiplier allows manual override from console
+          const globalMult = window.houseScaleMultiplier || 1.0;
+          const targetSize = 1.5 * globalMult;
           const factor = targetSize / maxd;
           obj.scale.setScalar(factor);
           console.log('scaling model by', factor, '(target', targetSize, 'm)');
