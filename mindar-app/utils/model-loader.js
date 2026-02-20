@@ -13,7 +13,16 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!loader) return;
     loader.load(url, (g) => {
       container.setAttribute('visible','true');
-      container.object3D.add(ext === 'fbx' ? g : g.scene);
+        const obj = (ext === 'fbx' ? g : g.scene);
+        // force materials to opaque in case opacity was zero
+        obj.traverse(o => {
+          if (o.isMesh && o.material) {
+            o.material.opacity = 1;
+            o.material.transparent = false;
+            o.material.needsUpdate = true;
+          }
+        });
+        container.object3D.add(obj);
       fallback.setAttribute('visible','false');
     }, undefined, () => { fallback.setAttribute('visible','true'); });
   };
