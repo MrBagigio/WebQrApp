@@ -49,11 +49,9 @@ self.onmessage = (e) => {
     try {
         switch (msg.type) {
             case 'init':
-                // allow caller to specify dictionary (e.g. ARUCO, ARUCO_5X5_1000, ARUCO_4X4_1000, ARUCO_MIP_36h12, etc.)
-                const dictName = msg.dictionaryName || 'ARUCO';
-                detector = new AR.Detector({ dictionaryName: dictName });
+                detector = new AR.Detector({ dictionaryName: 'ARUCO' });
                 markerLength = msg.markerLength || markerLength;
-                postMessage({ type: 'log', message: 'js-aruco2 pronto (' + dictName + ')' });
+                postMessage({ type: 'log', message: 'js-aruco2 pronto (ARUCO 5x5)' });
                 postMessage({ type: 'ready' });
                 break;
 

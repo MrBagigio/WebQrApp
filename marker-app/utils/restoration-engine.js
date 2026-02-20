@@ -1293,14 +1293,7 @@ export class RestorationEngine {
 
     _initWorker() {
         this.worker = new Worker('workers/aruco-worker.js');
-        // allow dictionary selection via query string for GitHub Pages convenience
-        let dict = 'ARUCO';
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const dq = params.get('dict');
-            if (dq) dict = dq;
-        } catch (_err) {}
-        this.worker.postMessage({ type: 'init', markerLength: this.markerSizeMM / 1000, dictionaryName: dict });
+        this.worker.postMessage({ type: 'init', markerLength: this.markerSizeMM / 1000 });
         // sync worker-side config
         try { 
             this.worker.postMessage({ 
