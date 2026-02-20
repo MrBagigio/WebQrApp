@@ -9,11 +9,11 @@
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <!-- loaders must match A-Frame's internal Three.js version (0.128) -->
-  <!-- fflate required by FBXLoader -->
-  <script src="https://unpkg.com/fflate@0.8.0/umd/fflate.min.js"></script>
+  <!-- fflate required by FBXLoader; 0.8.0 doesn’t exist on unpkg, fall back to 0.7.0 which matches our Three version -->
+  <script src="https://unpkg.com/fflate@0.7.0/umd/fflate.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
-  <script src="utils/model-loader.js"></script>
+  <!-- only load the model loader once below (with cache‑busting query) -->
 
   <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
 </head>
@@ -33,9 +33,9 @@
             renderer="antialias: true;" 
             vr-mode-ui="enabled: false" 
             device-orientation-permission-ui="enabled: false">
-    <!-- load fallback helper -->
+    <!-- load fallback helper and model loader (cache‑busted) -->
     <script src="utils/house-fallback.js"></script>
-    <script src="utils/model-loader.js"></script>
+    <script src="utils/model-loader.js?v=2"></script>
     <script>
       document.addEventListener('DOMContentLoaded', () => {
         const sc = document.getElementById('mindar-scene');

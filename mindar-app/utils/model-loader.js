@@ -53,11 +53,45 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // try static files too
-  const path = './assets/house';
-  ['glb','gltf','fbx'].forEach(ext => {
-    const url = `${path}.${ext}`;
-    console.log('attempting static load', url);
-    loadUrl(url); // loader callbacks will handle success/failure
-  });
+  // try static files too, but perform HEAD first so we can detect a missing web server
+  const tryStatic = () => {
+    const path = './assets/house';
+    let pending = 0;
+    let found = false;
+    let connRefused = false;
+    ['glb','gltf','fbx'].forEach(ext => {
+      pending++;
+      const url = `${path}.${ext}`;
+      console.log('checking static url', url);
+      fetch(url, { method: 'HEAD' })
+        .then(resp => {
+          if (resp.ok && !found) {
+            found = true;
+            loadUrl(url);
+          }
+        })
+        .catch(err => {
+          console.log('HEAD error', url, err);
+          // network failures (connection refused) show up as "Failed to fetch"
+          if (err.message && err.message.includes('Failed to fetch')) {
+            connRefused = true;
+          }
+        })
+        .finally(() => {
+          pending--;
+          if (pending === 0 && !found) {
+            if (connRefused) {
+              const hint = document.getElementById('hint');
+              if (hint) {
+                hint.innerHTML = 'Impossibile raggiungere il server; avvia un server statico (es. <code>npx live-server</code>).';
+              }
+            } else {
+              console.log('no static model file found');
+            }
+          }
+        });
+    });
+  };
+
+  tryStatic();
 });
