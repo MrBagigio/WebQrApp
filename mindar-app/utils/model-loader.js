@@ -20,6 +20,13 @@ window.addEventListener('DOMContentLoaded', () => {
         const box = new THREE.Box3().setFromObject(obj);
         const size = new THREE.Vector3(); box.getSize(size);
         console.log('model bbox size', size);
+        // automatically scale model so largest dimension ~0.4m
+        const maxd = Math.max(size.x, size.y, size.z);
+        if (maxd > 0) {
+          const factor = 0.4 / maxd;
+          obj.scale.setScalar(factor);
+          console.log('scaling model by', factor);
+        }
         obj.traverse(o => {
           if (o.isMesh && o.material) {
             o.material.opacity = 1;
