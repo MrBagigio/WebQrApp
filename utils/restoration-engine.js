@@ -1145,7 +1145,9 @@ export class RestorationEngine {
 
     _loadModels() {
         const loader = new THREE.FBXLoader();
-        const targetSize = this.houseSizeMM / 1000;
+        // global multiplier from UI slider (1.0 default)
+        const mult = parseFloat(window.houseScaleMultiplier) || 1.0;
+        const targetSize = (this.houseSizeMM / 1000) * mult;
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {

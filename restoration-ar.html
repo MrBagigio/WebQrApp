@@ -436,6 +436,13 @@
             <input type="range" min="0" max="100" value="0" class="restoration-slider" id="restoration-range">
             <div class="scale-labels"><span>STATO ATTUALE</span><span>RESTAURATA</span></div>
 
+            <!-- House scale control -->
+            <div class="slider-header" style="margin-top:12px;">
+                <span class="slider-label">Scala Casa</span>
+                <span class="percentage" id="size-label">1.0×</span>
+            </div>
+            <input type="range" min="0.5" max="10" value="1" step="0.1" class="restoration-slider" id="size-slider">
+
             <!-- Progress bar -->
             <div id="fbx-progress-container">
                 <progress id="fbx-progress" max="100" value="0"></progress>
@@ -458,6 +465,26 @@
         // fflate failover chain
         (function () {
             var cdns = [
+
+        // hook size slider after engine initialization
+        document.addEventListener('DOMContentLoaded', () => {
+            const slider = document.getElementById('size-slider');
+            const label = document.getElementById('size-label');
+            if (slider && label) {
+                window.houseScaleMultiplier = parseFloat(slider.value);
+                slider.oninput = () => {
+                    const v = parseFloat(slider.value);
+                    window.houseScaleMultiplier = v;
+                    label.textContent = v.toFixed(1) + '×';
+                    if (window.engine) {
+                        // rescale existing models live
+                        const factor = (window.engine.houseSizeMM/1000) * v;
+                        if (window.engine.restoredModel) window.engine._scaleModel(window.engine.restoredModel, factor);
+                        if (window.engine.destroyedModel) window.engine._scaleModel(window.engine.destroyedModel, factor);
+                    }
+                };
+            }
+        });
                 'vendor/fflate.min.js',
                 'https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.0/fflate.min.js',
                 'https://unpkg.com/fflate@0.8.0/lib/browser.min.js',
