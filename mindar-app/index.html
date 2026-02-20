@@ -34,6 +34,8 @@
   <div id="hint">Questo demo visualizza un modello 3D sulla tua immagine QR.<br>
     Dimensione:&nbsp;<input id="scale-slider" type="range" min="0.5" max="10" step="0.1" value="1" style="vertical-align:middle;">
     <span id="scale-value">1.0</span>&nbsp;x<br>
+    Altezza:&nbsp;<input id="offset-slider" type="range" min="-0.2" max="0.2" step="0.01" value="0" style="vertical-align:middle;">
+    <span id="offset-value">0.00&nbsp;m</span><br>
     Puoi caricare una casetta in formato <code>.glb</code>, <code>.gltf</code> o <code>.fbx</code> qui:
     <input id="model-upload" type="file" accept=".glb,.gltf,.fbx" style="margin-top:6px;">
     <br>oppure posiziona il file in <code>mindar-app/assets/house.*</code> sul server.</div>
@@ -50,6 +52,7 @@
       document.addEventListener('DOMContentLoaded', () => {
         const sc = document.getElementById('mindar-scene');
         const hint = document.getElementById('hint');
+
         const slider = document.getElementById('scale-slider');
         const valspan = document.getElementById('scale-value');
         if (slider && valspan) {
@@ -57,9 +60,24 @@
             valspan.textContent = slider.value;
             window.houseScaleMultiplier = parseFloat(slider.value);
           };
-          // initialize global
           window.houseScaleMultiplier = parseFloat(slider.value);
         }
+
+        const offsetSlider = document.getElementById('offset-slider');
+        const offsetVal = document.getElementById('offset-value');
+        if (offsetSlider && offsetVal) {
+          offsetSlider.oninput = () => {
+            const v = parseFloat(offsetSlider.value);
+            window.verticalOffset = v;
+            offsetVal.textContent = v.toFixed(2) + ' m';
+          };
+          window.verticalOffset = parseFloat(offsetSlider.value);
+        }
+
+        if (sc) {
+          sc.addEventListener('targetFound', () => {
+            console.log('MindAR target found');
+            if (hint) hint.textContent = 'TARGET RILEVATO';
           });
           sc.addEventListener('targetLost', () => {
             console.log('MindAR target lost');

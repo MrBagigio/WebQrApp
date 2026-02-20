@@ -35,6 +35,10 @@ window.addEventListener('DOMContentLoaded', () => {
           obj.scale.setScalar(factor);
           console.log('scaling model by', factor, '(target', targetSize, 'm, mult', globalMult,')');
         }
+        // apply vertical offset if set
+        if (window.verticalOffset) {
+          obj.position.y += window.verticalOffset;
+        }
         obj.traverse(o => {
           if (o.isMesh && o.material) {
             o.material.opacity = 1;
