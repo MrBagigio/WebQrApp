@@ -1,0 +1,552 @@
+/**
+ * ExpeAR Pro - V14 ZENITH TRANSCENDENCE
+ * Modular ESM-inspired architecture for high-performance spatial computing.
+ */
+
+// --- CORE UTILITIES ---
+const Utils = {
+    haptic: (pattern) => {
+        if ("vibrate" in navigator) navigator.vibrate(pattern);
+    },
+    hapticPulse: () => {
+        Utils.haptic([10, 30, 10, 30, 50]); // Heartbeat pattern
+    },
+    log: (msg, type = 'info') => {
+        const icons = { info: '💎', warn: '⚠️', error: '🔥', state: '🚀' };
+        console.log(`${icons[type]} [ZENITH] ${msg}`);
+    }
+};
+
+// --- ENGINES ---
+
+class SpatialAudioEngine {
+    constructor() {
+        this.sounds = new Map();
+        this.isInitialized = false;
+        Howler.volume(0.8);
+    }
+
+    async play(id, config) {
+        if (this.sounds.has(id)) return;
+
+        const sound = new Howl({
+            src: [config.audio || 'assets/default.mp3'],
+            spatial: true,
+            loop: true,
+            volume: 0,
+            onplay: () => sound.fade(0, 0.5, 2000)
+        });
+
+        this.sounds.set(id, sound);
+        sound.play();
+        Utils.log(`Audio Active: ${id}`);
+    }
+
+    updateListener(pos, rot) {
+        // True Spatial Mapping
+        Howler.pos(pos.x, pos.y, pos.z);
+        // Convert Euler rotation to forward/up vectors for Howler
+        const forward = new THREE.Vector3(0, 0, -1);
+        forward.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z)));
+        Howler.orientation(forward.x, forward.y, forward.z, 0, 1, 0);
+    }
+
+    stop(id) {
+        const sound = this.sounds.get(id);
+        if (sound) {
+            sound.fade(sound.volume(), 0, 1000);
+            setTimeout(() => {
+                sound.stop();
+                this.sounds.delete(id);
+            }, 1000);
+        }
+    }
+}
+
+class I18nEngine {
+    constructor() {
+        this.data = {};
+        try {
+            this.currentLang = localStorage.getItem('expear_lang') || (navigator.language.startsWith('it') ? 'it' : 'en');
+        } catch (e) {
+            Utils.log('Could not read language preference from storage: ' + (e?.message), 'warn');
+            this.currentLang = (navigator.language && navigator.language.startsWith && navigator.language.startsWith('it')) ? 'it' : 'en';
+        }
+        this.fallback = { "it": { "ui": { "start_title": "ExpeAR Pro" } }, "en": { "ui": { "start_title": "ExpeAR Pro" } } };
+    }
+
+    async init() {
+        try {
+            const res = await fetch('i18n.json');
+            if (!res.ok) throw new Error("Fallback required");
+            this.data = await res.json();
+        } catch (e) {
+            Utils.log("Localization Fetch Failed, using internal baseline", 'warn');
+            this.data = this.fallback;
+        }
+        this.apply();
+    }
+
+    t(path) {
+        return path.split('.').reduce((o, k) => (o && o[k]) ? o[k] : null, this.data[this.currentLang]) || path;
+    }
+
+    apply() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            const translation = this.t(key);
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                el.placeholder = translation;
+            } else {
+                el.textContent = translation;
+            }
+        });
+    }
+}
+
+// --- APP STATE ---
+const APP_STATE = { LOADING: 'LOADING', IDLE: 'IDLE', NARRATOR: 'NARRATOR', SCANNING: 'SCANNING', TRACKING: 'TRACKING' };
+
+class ZenithApp {
+    constructor() {
+        this.state = APP_STATE.LOADING;
+        try {
+            const saved = localStorage.getItem('expear_v14_data');
+            this.discovered = new Set(saved ? JSON.parse(saved) : []);
+        } catch (e) {
+            Utils.log('LocalStorage unavailable: ' + (e?.message), 'warn');
+            this.discovered = new Set();
+        }
+
+        // Modules
+        this.i18n = new I18nEngine();
+        this.audio = new SpatialAudioEngine();
+
+        // Dom Elements
+        this.ui = {
+            loader: { screen: document.getElementById('loading-screen'), bar: document.getElementById('loader-bar'), status: document.getElementById('loader-status') },
+            start: document.getElementById('start-screen'),
+            game: document.getElementById('game-ui'),
+            narrator: document.getElementById('narrator-intro'),
+            info: document.getElementById('info-sheet'),
+            reticle: document.getElementById('reticle'),
+            journal: document.getElementById('journal-overlay'),
+            achievement: document.getElementById('achievement-popup')
+        };
+
+        // Loop control & AR listeners
+        this._rafId = null;
+        this._running = false;
+        this._boundLoop = this.loop.bind(this);
+        this._arListeners = [];
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) this.stopLoop();
+            else this.startLoop();
+        });
+
+        window.addEventListener('pagehide', () => {
+            try { this.stopLoop(); this.destroyAR(); } catch (e) {}
+        });
+    }
+
+    async boot() {
+        Utils.log("Initializing Zen-V14 Systems...", 'state');
+
+        await this.updateLoading(20, "Synapse Boot...");
+        await this.i18n.init();
+
+        await this.updateLoading(50, "Acoustic Mapping...");
+        this.initStartBackground();
+        this.bindEvents();
+
+        await this.updateLoading(80, "Quantum AR Sync...");
+        this.initAR();
+
+        await this.updateLoading(100, "Zenith Achieved");
+        this.startLoop();
+    }
+
+    async updateLoading(percent, msg) {
+        gsap.to(this.ui.loader.bar, { width: `${percent}%`, duration: 0.5 });
+        this.ui.loader.status.textContent = msg.toUpperCase();
+        if (percent >= 100) {
+            await gsap.to(this.ui.loader.screen, { opacity: 0, duration: 1, delay: 0.5 });
+            this.ui.loader.screen.classList.add('hidden');
+            this.transition(APP_STATE.IDLE);
+        }
+    }
+
+    initStartBackground() {
+        const bg = document.createElement('div');
+        bg.className = 'start-bg';
+        this.ui.start.appendChild(bg);
+        this.startBg = bg;
+    }
+
+    async transition(next) {
+        if (this.state === next) return;
+        const prev = this.state;
+        this.state = next;
+        Utils.log(`${prev} ➔ ${next}`, 'state');
+
+        // Exit Logic
+        if (prev === APP_STATE.IDLE) {
+            if (this.startBg) { this.startBg.remove(); this.startBg = null; }
+            await gsap.to(this.ui.start, { opacity: 0, scale: 1.1, duration: 0.8 });
+            this.ui.start.classList.add('hidden');
+        }
+
+        if (prev === APP_STATE.NARRATOR) {
+            await gsap.to(this.ui.narrator, { opacity: 0, scale: 0.9, duration: 0.5 });
+            this.ui.narrator.classList.add('hidden');
+        }
+
+        // Enter Logic
+        switch (next) {
+            case APP_STATE.NARRATOR:
+                this.ui.narrator.classList.remove('hidden');
+                gsap.fromTo(this.ui.narrator, { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1 });
+                break;
+            case APP_STATE.SCANNING:
+                this.ui.game.classList.remove('hidden');
+                this.ui.reticle.classList.remove('hidden');
+                gsap.from(this.ui.reticle, { scale: 1.5, opacity: 0, duration: 0.8, ease: "expo.out" });
+                break;
+        }
+    }
+
+    bindEvents() {
+        document.getElementById('start-btn').onclick = () => this.transition(APP_STATE.NARRATOR);
+        document.getElementById('narrator-next').onclick = () => {
+            this.startAR();
+            this.transition(APP_STATE.SCANNING);
+        };
+        document.getElementById('narrator-skip').onclick = () => {
+            this.startAR();
+            this.transition(APP_STATE.SCANNING);
+        };
+        document.querySelectorAll('.close-btn').forEach(b => b.onclick = () => this.closeOverlays());
+
+        document.getElementById('journal-btn').onclick = () => this.toggleJournal();
+        document.getElementById('contrast-toggle').onclick = () => document.body.classList.toggle('high-contrast');
+
+        // Share & Collect buttons use onclick (set in openCard to avoid double-bind)
+        const collectBtn = document.getElementById('collect-btn');
+        if (collectBtn) collectBtn.onclick = () => this.collectCurrentPoi();
+    }
+
+    initAR() {
+        // Cleanup previous AR listeners/targets if any
+        try { this.destroyAR(); } catch (e) {}
+        const container = document.getElementById('ar-targets-container');
+        const pois = this.i18n.data[this.i18n.currentLang]?.pois || {};
+
+        Object.entries(pois).forEach(([id, poi]) => {
+            const target = document.createElement('a-entity');
+            target.setAttribute('mindar-image-target', `targetIndex: ${Number(id)}`);
+
+            const model = document.createElement(poi.target.shape || 'a-sphere');
+            model.setAttribute('material', `color: ${poi.target.color}; metalness: 0.8; roughness: 0.2; emissive: ${poi.target.color}; emissiveIntensity: 0.3`);
+            model.setAttribute('scale', '0 0 0');
+
+            if (poi.target.animation) model.setAttribute('animation', poi.target.animation);
+
+            target.appendChild(model);
+
+            const onFound = () => {
+                model.object3D.matrixAutoUpdate = true; // Ensure updates for animation
+                gsap.to(model.object3D.scale, {
+                    x: 1, y: 1, z: 1,
+                    duration: 1.2,
+                    ease: "back.out(1.7)"
+                });
+                this.audio.play(id, poi.nirvana || {});
+                this.openCard(id);
+                Utils.hapticPulse();
+
+                // Rank recalculation after discovery
+                this.recalculateRank();
+            };
+
+            const onLost = () => {
+                gsap.to(model.object3D.scale, { x: 0, y: 0, z: 0, duration: 0.5 });
+                this.audio.stop(id);
+            };
+
+            target.addEventListener('targetFound', onFound);
+            target.addEventListener('targetLost', onLost);
+
+            this._arListeners.push({ target, event: 'targetFound', handler: onFound });
+            this._arListeners.push({ target, event: 'targetLost', handler: onLost });
+
+            container.appendChild(target);
+        });
+
+        // Initialize ranks from i18n (fallback safe)
+        this.ranks = (this.i18n.data[this.i18n.currentLang] && this.i18n.data[this.i18n.currentLang].ranks) || ['NOVIZIO', 'ESPERTO', 'LEGGENDA'];
+        this.currentRank = 0;
+        this.updateRankDisplay();
+    }
+
+    startAR() {
+        try {
+            const scene = document.querySelector('a-scene');
+            const system = scene && scene.systems && scene.systems["mindar-image-system"];
+            if (system && typeof system.start === 'function') {
+                system.start();
+            } else {
+                throw new Error('MindAR system not available');
+            }
+        } catch (e) {
+            Utils.log('Failed to start AR: ' + (e?.message), 'error');
+            document.getElementById('error-title').textContent = this.i18n.t('ui.error_camera_title');
+            document.getElementById('error-msg').textContent = this.i18n.t('ui.error_camera_msg');
+            document.getElementById('error-screen').classList.remove('hidden');
+        }
+    }
+
+    openCard(id) {
+        const data = this.i18n.t(`pois.${id}`);
+        if (!data) return;
+
+        this._currentCardId = id; // for share actions
+
+        if (!this.discovered.has(id)) {
+            this.discovered.add(id);
+            try {
+                localStorage.setItem('expear_v14_data', JSON.stringify([...this.discovered]));
+            } catch (e) {
+                Utils.log('Failed to save discovery: ' + (e?.message), 'warn');
+            }
+            // Achievement flow
+            this.popAchievement(data.title);
+            this.emitAchievement('first_blood');
+
+            // Check completionist
+            const total = Object.keys(this.i18n.data[this.i18n.currentLang]?.pois || {}).length || 1;
+            if (this.discovered.size >= total) this.emitAchievement('completionist');
+        }
+
+        document.getElementById('card-cat').textContent = data.badge;
+        document.getElementById('card-title').textContent = data.title;
+        document.getElementById('card-desc').textContent = data.desc;
+
+        // Update POI counter
+        this.updatePoiCounter();
+
+        this.ui.info.classList.remove('hidden');
+        gsap.to(this.ui.info, { y: 0, opacity: 1, duration: 0.8, ease: "expo.out" });
+
+        // Set share handler (onclick avoids double-bind from addEventListener)
+        const shareBtn = document.getElementById('share-discovery');
+        if (shareBtn) shareBtn.onclick = () => this.shareDiscovery();
+    }
+
+    updatePoiCounter() {
+        const el = document.getElementById('poi-found');
+        if (el) el.textContent = this.discovered.size;
+    }
+
+    collectCurrentPoi() {
+        const id = this._currentCardId;
+        if (!id) return;
+        if (!this.discovered.has(id)) {
+            this.discovered.add(id);
+            try {
+                localStorage.setItem('expear_v14_data', JSON.stringify([...this.discovered]));
+            } catch (e) {
+                Utils.log('Failed to save: ' + (e?.message), 'warn');
+            }
+            this.updatePoiCounter();
+            this.recalculateRank();
+        }
+        this.showNotification(this.i18n.t('ui.ach_label'));
+        this.closeOverlays();
+    }
+
+    popAchievement(title) {
+        document.getElementById('ach-title').textContent = title;
+        this.ui.achievement.classList.remove('hidden');
+        const content = this.ui.achievement.querySelector('.achievement-content');
+        gsap.fromTo(content, { scale: 0.5, opacity: 0 }, { scale: 1, opacity: 1, duration: 1, ease: "elastic.out(1, 0.5)" });
+        setTimeout(() => {
+            gsap.to(this.ui.achievement, {
+                opacity: 0, duration: 1, onComplete: () => {
+                    this.ui.achievement.classList.add('hidden');
+                    this.ui.achievement.style.opacity = 1;
+                }
+            });
+        }, 4000);
+    }
+
+    closeOverlays() {
+        gsap.to(this.ui.info, { y: '100%', opacity: 0, duration: 0.5, onComplete: () => this.ui.info.classList.add('hidden') });
+        this.ui.journal.classList.add('hidden');
+    }
+
+    toggleJournal() {
+        const list = document.getElementById('journal-list');
+        list.innerHTML = '';
+        if (this.discovered.size === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'empty-msg';
+            empty.textContent = this.i18n.t('ui.journal_empty');
+            list.appendChild(empty);
+        } else {
+            this.discovered.forEach(id => {
+                const data = this.i18n.t(`pois.${id}`);
+                const item = document.createElement('div');
+                item.className = 'journal-item';
+                const h4 = document.createElement('h4');
+                h4.textContent = data.title;
+                const badge = document.createElement('span');
+                badge.className = 'badge';
+                badge.textContent = data.badge;
+                item.append(h4, badge);
+                item.onclick = () => { this.openCard(id); this.ui.journal.classList.add('hidden'); };
+                list.appendChild(item);
+            });
+        }
+        this.ui.journal.classList.remove('hidden');
+        gsap.from(this.ui.journal.querySelector('.journal-modal'), { scale: 0.9, opacity: 0, duration: 0.4 });
+    }
+
+    // p5 removed - using lightweight CSS background for start screen.
+
+    startLoop() {
+        if (this._running) return;
+        this._running = true;
+        this._rafId = requestAnimationFrame(this._boundLoop);
+    }
+
+    stopLoop() {
+        this._running = false;
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
+    }
+
+    loop() {
+        // Only run when visible to avoid background CPU/GPU usage
+        if (!this._running || document.hidden) return;
+
+        if (this.state === APP_STATE.SCANNING || this.state === APP_STATE.TRACKING) {
+            const cam = document.querySelector('[camera]');
+            if (cam && cam.object3D) {
+                const p = cam.object3D.position;
+                const r = cam.object3D.rotation;
+                this.audio.updateListener(p, r);
+            }
+        }
+        this._rafId = requestAnimationFrame(this._boundLoop);
+    }
+
+    destroyAR() {
+        this._arListeners.forEach(({ target, event, handler }) => {
+            try { target.removeEventListener(event, handler); } catch (e) {}
+        });
+        this._arListeners = [];
+        const container = document.getElementById('ar-targets-container');
+        if (container) container.innerHTML = '';
+    }
+
+    // --- RANKS & ACHIEVEMENTS ---
+    recalculateRank() {
+        const total = Object.keys(this.i18n.data[this.i18n.currentLang]?.pois || {}).length || 1;
+        const ratio = this.discovered.size / total;
+        const newIndex = Math.min(this.ranks.length - 1, Math.floor(ratio * this.ranks.length));
+        if (newIndex !== this.currentRank) {
+            const old = this.currentRank;
+            this.currentRank = newIndex;
+            this.updateRankDisplay(old);
+        }
+    }
+
+    updateRankDisplay(prevIndex) {
+        const rankName = this.ranks[this.currentRank] || this.ranks[0];
+        const badge = document.getElementById('explorer-rank');
+        if (badge) badge.textContent = rankName;
+        if (typeof prevIndex !== 'undefined' && prevIndex !== this.currentRank) {
+            this.showAchievement(`Grado Sbloccato: ${rankName}`);
+            this.showNotification(`Grado aggiornato: ${rankName}`);
+        }
+    }
+
+    emitAchievement(id) {
+        // Simple achievement registry
+        const map = {
+            first_blood: { title: 'Prima Scoperta', text: 'Hai trovato il primo POI!', color: '#FFD700' },
+            completionist: { title: 'Completionist', text: 'Hai scoperto tutti i POI!', color: '#00FF88' }
+        };
+        const a = map[id];
+        if (a) this.showAchievement(a.title, a.color, a.text);
+    }
+
+    showAchievement(title, color = '#FFB300', subtitle) {
+        const container = document.getElementById('achievement-system');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'achievement-popup';
+        el.innerHTML = `
+          <div class="achievement-content" style="border-color: ${color}">
+            <strong>${title}</strong>
+            ${subtitle ? `<div class="ach-sub">${subtitle}</div>` : ''}
+          </div>
+        `;
+        container.appendChild(el);
+        gsap.fromTo(el, { scale: 0.8, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.6, ease: 'expo.out' });
+        setTimeout(() => {
+            gsap.to(el, { opacity: 0, y: -40, duration: 0.5, onComplete: () => el.remove() });
+        }, 3500);
+    }
+
+    showNotification(msg) {
+        const n = document.createElement('div');
+        n.className = 'notif';
+        n.textContent = msg;
+        document.body.appendChild(n);
+        gsap.fromTo(n, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.3 });
+        setTimeout(() => {
+            gsap.to(n, { opacity: 0, y: 10, duration: 0.4, onComplete: () => n.remove() });
+        }, 2500);
+    }
+
+    // --- SHARING ---
+    async shareDiscovery() {
+        const id = this._currentCardId;
+        if (!id) return this.showNotification('Nessun elemento da condividere');
+        const title = document.getElementById('card-title').textContent || 'ExpeAR Discovery';
+        const url = `${location.origin}${location.pathname}?share=${encodeURIComponent(id)}`;
+
+        try {
+            if (navigator.share) {
+                await navigator.share({ title, text: `Ho scoperto: ${title}`, url });
+                this.showNotification('Condiviso con successo');
+            } else if (navigator.clipboard) {
+                await navigator.clipboard.writeText(url);
+                this.showNotification('Link copiato negli appunti');
+            } else {
+                this.showNotification('Condivisione non supportata');
+            }
+        } catch (e) {
+            Utils.log('Share failed: ' + (e?.message), 'warn');
+            this.showNotification('Condivisione fallita');
+        }
+    }
+}
+
+// Initialize Global Zen Instance
+window.Zenith = new ZenithApp();
+
+// Service Worker Registration (graceful)
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+            .then(() => Utils.log('Service Worker registered', 'info'))
+            .catch(err => Utils.log('SW registration failed: ' + err?.message, 'warn'));
+    });
+}
+
+window.onload = () => window.Zenith.boot();
