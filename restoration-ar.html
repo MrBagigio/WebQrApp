@@ -466,26 +466,6 @@
         // fflate failover chain
         (function () {
             var cdns = [
-
-        // hook size slider after engine initialization
-        document.addEventListener('DOMContentLoaded', () => {
-            const slider = document.getElementById('size-slider');
-            const label = document.getElementById('size-label');
-            if (slider && label) {
-                window.houseScaleMultiplier = parseFloat(slider.value);
-                slider.oninput = () => {
-                    const v = parseFloat(slider.value);
-                    window.houseScaleMultiplier = v;
-                    label.textContent = v.toFixed(1) + '×';
-                    if (window.engine) {
-                        // rescale existing models live
-                        const factor = (window.engine.houseSizeMM/1000) * v;
-                        if (window.engine.restoredModel) window.engine._scaleModel(window.engine.restoredModel, factor);
-                        if (window.engine.destroyedModel) window.engine._scaleModel(window.engine.destroyedModel, factor);
-                    }
-                };
-            }
-        });
                 'vendor/fflate.min.js',
                 'https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.0/fflate.min.js',
                 'https://unpkg.com/fflate@0.8.0/lib/browser.min.js',
@@ -501,6 +481,26 @@
             }
             loadFflate(0);
         })();
+    </script>
+    <script>
+        // size-slider hook (outside of fflate IIFE)
+        document.addEventListener('DOMContentLoaded', () => {
+            const slider = document.getElementById('size-slider');
+            const label = document.getElementById('size-label');
+            if (slider && label) {
+                window.houseScaleMultiplier = parseFloat(slider.value);
+                slider.oninput = () => {
+                    const v = parseFloat(slider.value);
+                    window.houseScaleMultiplier = v;
+                    label.textContent = v.toFixed(1) + '×';
+                    if (window.engine) {
+                        const factor = (window.engine.houseSizeMM/1000) * v;
+                        if (window.engine.restoredModel) window.engine._scaleModel(window.engine.restoredModel, factor);
+                        if (window.engine.destroyedModel) window.engine._scaleModel(window.engine.destroyedModel, factor);
+                    }
+                };
+            }
+        });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"
         onerror="window.log && window.log('Errore FBXLoader','error')"></script>
