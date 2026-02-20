@@ -2031,6 +2031,24 @@ export class RestorationEngine {
             ctx.fillStyle = isValid ? '#ffffff' : '#ffcccc';
             ctx.fillText(label, cx, cy);
 
+            // draw simple 2D axes using corner orientation (X: from corner0→1, Y: from 0→3)
+            if (isValid) {
+                const vx = {x: c[1][0] - c[0][0], y: c[1][1] - c[0][1]};
+                const vy = {x: c[3][0] - c[0][0], y: c[3][1] - c[0][1]};
+                const lenx = Math.hypot(vx.x, vx.y);
+                const leny = Math.hypot(vy.x, vy.y);
+                if (lenx > 0 && leny > 0) {
+                    const axlen = 0.3; // fraction of edge length
+                    ctx.strokeStyle = '#ff0';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(cx + vx.x * axlen, cy + vx.y * axlen);
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(cx + vy.x * axlen, cy + vy.y * axlen);
+                    ctx.stroke();
+                }
+            }
             // Add distance for valid markers 
             if (isValid && m.tvec && m.tvec.length === 3) {
                 const dist = Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]);
