@@ -45,6 +45,16 @@
 
 <body>
 
+  <!-- Mode selector overlay -->
+  <div id="mode-select" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;z-index:9999;gap:20px;">
+    <button id="choose-aruco" style="padding:12px 24px;font-size:1rem;">Modalità ArUco</button>
+    <button id="choose-qr" style="padding:12px 24px;font-size:1rem;">Modalità QR</button>
+  </div>
+  <script>
+    document.getElementById('choose-aruco').onclick = () => { document.getElementById('mode-select').style.display = 'none'; };
+    document.getElementById('choose-qr').onclick = () => { window.location.href = 'mindar-app/index.html'; };
+  </script>
+
   <!-- Loading Screen -->
   <div id="loading-screen" class="loading-overlay">
     <div class="loader-content">
