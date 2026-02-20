@@ -176,10 +176,56 @@ self.onmessage = async (e) => {
           // allow per-frame markerLength override (engine may downscale frames)
           const usedMarkerLength = (typeof msg.markerLength === 'number') ? msg.markerLength : markerLength;
           cv.aruco.estimatePoseSingleMarkers(corners, usedMarkerLength, cameraMatrix, distCoeffs, rvecs, tvecs);
+
+          const half = usedMarkerLength / 2.0;
+          const objPts = cv.matFromArray(4, 1, cv.CV_32FC3, [
+            -half, half, 0,
+             half, half, 0,
+             half, -half, 0,
+            -half, -half, 0
+          ]);
+
           for (let i = 0; i < rvecs.rows; i++) {
-            markers[i].rvec = [rvecs.data64F[i * 3 + 0], rvecs.data64F[i * 3 + 1], rvecs.data64F[i * 3 + 2]];
-            markers[i].tvec = [tvecs.data64F[i * 3 + 0], tvecs.data64F[i * 3 + 1], tvecs.data64F[i * 3 + 2]];
+            const rvec = [rvecs.data64F[i * 3 + 0], rvecs.data64F[i * 3 + 1], rvecs.data64F[i * 3 + 2]];
+            const tvec = [tvecs.data64F[i * 3 + 0], tvecs.data64F[i * 3 + 1], tvecs.data64F[i * 3 + 2]];
+            markers[i].rvec = rvec;
+            markers[i].tvec = tvec;
+            markers[i].source = 'opencv-pnp';
+            markers[i].cameraAngleDeg = viewAngleDegFromRvec(rvec);
+
+            let poseError = 0;
+            let rv = null, tv = null, proj = null;
+            try {
+              rv = cv.matFromArray(3, 1, cv.CV_64F, rvec);
+              tv = cv.matFromArray(3, 1, cv.CV_64F, tvec);
+              proj = new cv.Mat();
+              cv.projectPoints(objPts, rv, tv, cameraMatrix, distCoeffs, proj);
+              let sumErr = 0;
+              for (let j = 0; j < 4; j++) {
+                const px = proj.data32F[j * 2];
+                const py = proj.data32F[j * 2 + 1];
+                const dx = px - markers[i].corners[j][0];
+                const dy = py - markers[i].corners[j][1];
+                sumErr += Math.hypot(dx, dy);
+              }
+              poseError = sumErr / 4.0;
+            } catch (_) {
+              poseError = 0;
+            } finally {
+              try { if (rv) rv.delete(); } catch (_) { }
+              try { if (tv) tv.delete(); } catch (_) { }
+              try { if (proj) proj.delete(); } catch (_) { }
+            }
+
+            markers[i].poseError = poseError;
+            markers[i].confidence = computePoseConfidence({
+              source: 'opencv-pnp',
+              poseError,
+              corners: markers[i].corners,
+              cameraAngleDeg: markers[i].cameraAngleDeg
+            });
           }
+          objPts.delete();
           rvecs.delete(); tvecs.delete();
           if (cameraMatrix) cameraMatrix.delete();
           if (distCoeffs) distCoeffs.delete();
@@ -218,4 +264,73 @@ function waitForCv(timeoutMs = 15000) {
       setTimeout(check, 100);
     })();
   });
+}
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function markerPerimeterPx(corners) {
+  if (!Array.isArray(corners) || corners.length < 4) return 0;
+  let p = 0;
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % corners.length];
+    const dx = (a[0] - b[0]);
+    const dy = (a[1] - b[1]);
+    p += Math.hypot(dx, dy);
+  }
+  return p;
+}
+
+function computePoseConfidence({ source, poseError, corners, cameraAngleDeg }) {
+  const perim = markerPerimeterPx(corners);
+  const perimN = clamp01((perim - 80) / 240);
+  const viewDeg = Number.isFinite(cameraAngleDeg) ? cameraAngleDeg : 0;
+  const obliqueN = clamp01((viewDeg - 20) / 60);
+  const angleW = Math.max(0.08, 1 - obliqueN * obliqueN);
+
+  if (source === 'opencv-pnp') {
+    const errN = Math.min(3, Math.max(0, poseError / 8.0));
+    const base = Math.exp(-(errN * errN) * 0.9);
+    return Math.max(0.04, Math.min(1.0, (0.10 + 0.62 * base + 0.28 * perimN) * angleW));
+  }
+
+  const errN = Math.min(3.5, Math.max(0, poseError / 1.2));
+  const base = Math.exp(-errN * 0.95);
+  return Math.max(0.03, Math.min(0.92, (0.08 + 0.60 * base + 0.32 * perimN) * angleW));
+}
+
+function clampNegPos1(v) {
+  return Math.max(-1, Math.min(1, v));
+}
+
+function rotationMatrixFromRvec(rvec) {
+  const rx = rvec[0], ry = rvec[1], rz = rvec[2];
+  const theta = Math.hypot(rx, ry, rz);
+  if (theta < 1e-9) {
+    return [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1]
+    ];
+  }
+  const kx = rx / theta, ky = ry / theta, kz = rz / theta;
+  const c = Math.cos(theta), s = Math.sin(theta), v = 1 - c;
+  return [
+    [kx * kx * v + c, kx * ky * v - kz * s, kx * kz * v + ky * s],
+    [ky * kx * v + kz * s, ky * ky * v + c, ky * kz * v - kx * s],
+    [kz * kx * v - ky * s, kz * ky * v + kx * s, kz * kz * v + c]
+  ];
+}
+
+function viewAngleDegFromRotationMatrix(R) {
+  const nz = R[2][2];
+  const frontal = Math.abs(clampNegPos1(nz));
+  return Math.acos(frontal) * 180 / Math.PI;
+}
+
+function viewAngleDegFromRvec(rvec) {
+  const R = rotationMatrixFromRvec(rvec);
+  return viewAngleDegFromRotationMatrix(R);
 }

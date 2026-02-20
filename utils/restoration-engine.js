@@ -82,6 +82,9 @@ export class RestorationEngine {
         this._obliqueRejectAngleDeg = 84;    // reject near-grazing markers
         this._obliqueSoftLimitDeg = 70;      // above this, heavily downweight
         this._obliqueWeightFloor = 0.12;
+        this._adaptiveTuningEnabled = true;
+        this._debugOverlayEnabled = true;
+        this._lastFusionStats = null;
 
         // EKF option for rotation smoothing (disabled by default)
         this._useQuatEKF = false;
@@ -411,6 +414,16 @@ export class RestorationEngine {
     setMarkerConfidenceThreshold(t) {
         this._markerConfidenceThreshold = Math.max(0, Math.min(1, Number(t) || this._markerConfidenceThreshold));
         this.log('Marker confidence threshold set: ' + this._markerConfidenceThreshold);
+    }
+
+    setAdaptiveTuningEnabled(enable) {
+        this._adaptiveTuningEnabled = !!enable;
+        this.log('Adaptive fusion tuning ' + (this._adaptiveTuningEnabled ? 'enabled' : 'disabled'));
+    }
+
+    setDebugOverlayEnabled(enable) {
+        this._debugOverlayEnabled = !!enable;
+        this.log('Debug overlay ' + (this._debugOverlayEnabled ? 'enabled' : 'disabled'));
     }
 
     // Set corner-flow normalized SSD threshold (worker-side). Also forwards to worker.
@@ -1334,7 +1347,8 @@ export class RestorationEngine {
             poseError: typeof m.poseError === 'number' ? m.poseError : null,
             distance: (m.tvec && m.tvec.length === 3) ? Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]) : null,
             source: m.source || null,
-            confidence: typeof m.confidence === 'number' ? m.confidence : null
+            confidence: typeof m.confidence === 'number' ? m.confidence : null,
+            cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
         }));
 
         if (markers.length > 0) this._drawMarkerOverlay(markers);
@@ -1408,13 +1422,40 @@ export class RestorationEngine {
         this._lastTrackingTime = now;
         this._framesWithoutDetection = 0;
 
+        const baseTrackWindow = Math.max(0.08, this._fusionTrackWindow || 0.24);
+        const baseOutlierDist = Math.max(0.08, this._markerOutlierDistance || 0.35);
+        const baseConfidenceThreshold = Math.max(0.01, this._markerConfidenceThreshold || 0.15);
+        const baseSoftLimitDeg = Math.max(45, this._obliqueSoftLimitDeg || 70);
+        const baseRejectDeg = Math.max(65, this._obliqueRejectAngleDeg || 84);
+
+        const confNoise = Math.max(0, 1 - this._measurementConfidenceEMA);
+        const spreadNoise = Math.max(0, Math.min(1.2, this._poolSpreadEMA / 0.055));
+        const viewNoise = Math.max(0, Math.min(1.1, this._viewAngleEMA / 80));
+        const aggregateNoise = Math.max(0, Math.min(1.35, confNoise * 0.60 + spreadNoise * 0.30 + viewNoise * 0.10));
+
+        let adaptiveTrackWindow = baseTrackWindow;
+        let adaptiveOutlierDistance = baseOutlierDist;
+        let adaptiveConfidenceThreshold = baseConfidenceThreshold;
+        let adaptiveObliqueSoftLimitDeg = baseSoftLimitDeg;
+        let adaptiveObliqueRejectDeg = baseRejectDeg;
+
+        if (this._adaptiveTuningEnabled) {
+            adaptiveTrackWindow = Math.max(0.12, Math.min(0.46, baseTrackWindow * (1 + aggregateNoise * 0.45)));
+            adaptiveOutlierDistance = Math.max(0.18, Math.min(0.52, baseOutlierDist * (1 - aggregateNoise * 0.18)));
+            adaptiveConfidenceThreshold = Math.max(0.08, Math.min(0.42,
+                baseConfidenceThreshold + (aggregateNoise * 0.08) + (this._viewAngleEMA > 66 ? 0.02 : 0)
+            ));
+            adaptiveObliqueSoftLimitDeg = Math.max(56, Math.min(76, baseSoftLimitDeg - aggregateNoise * 8.0));
+            adaptiveObliqueRejectDeg = Math.max(72, Math.min(88, baseRejectDeg - aggregateNoise * 6.5));
+        }
+
         // ── Step 1: Compute house-centre pose from each detected marker ──
         const referencePosForGate = this._hasFirstPose
             ? ((this._worldAnchorPos && this._worldAnchorActive)
                 ? this._worldAnchorPos.clone()
                 : this.modelGroup.position.clone())
             : null;
-        const temporalSigma = Math.max(1e-4, this._fusionTrackWindow || 0.24);
+        const temporalSigma = Math.max(1e-4, adaptiveTrackWindow);
         const candidates = [];
         for (const m of poseful) {
             const markerOffset = this._markerOffsetsForId(m.id);
@@ -1444,15 +1485,15 @@ export class RestorationEngine {
                 : 0;
 
             // Reject near-grazing observations: they are the #1 source of jitter spikes.
-            if (cameraAngleDeg > this._obliqueRejectAngleDeg) continue;
+            if (cameraAngleDeg > adaptiveObliqueRejectDeg) continue;
 
             // Drop very low-quality detections early.
-            if (confidence < this._markerConfidenceThreshold) continue;
+            if (confidence < adaptiveConfidenceThreshold) continue;
 
             // Hard outlier guard versus current tracked pose/anchor reference.
             if (referencePosForGate) {
                 const gateDist = housePos.distanceTo(referencePosForGate);
-                if (gateDist > (this._markerOutlierDistance * 2.0)) continue;
+                if (gateDist > (adaptiveOutlierDistance * 2.0)) continue;
             }
 
             const sourceBoost = (m.source === 'opencv-pnp') ? 1.12 : ((m.source === 'mixed') ? 1.06 : 1.0);
@@ -1464,7 +1505,7 @@ export class RestorationEngine {
                 ? Math.exp(-(temporalDist * temporalDist) / (2 * temporalSigma * temporalSigma))
                 : 1.0;
             const robustErrW = 1 / (1 + Math.pow(poseError / Math.max(0.01, this._maxPoseErrorForFusion), 2));
-            const obliqueN = Math.max(0, Math.min(1, (cameraAngleDeg - 15) / Math.max(1, (this._obliqueSoftLimitDeg - 15))));
+            const obliqueN = Math.max(0, Math.min(1, (cameraAngleDeg - 15) / Math.max(1, (adaptiveObliqueSoftLimitDeg - 15))));
             const angleW = Math.max(this._obliqueWeightFloor, 1 - obliqueN * obliqueN * 0.9);
 
             candidates.push({
@@ -1503,7 +1544,7 @@ export class RestorationEngine {
             }
             const sigma = Math.sqrt(varSum / wSum);
             const adaptiveCutoff = Math.max(this._fusionAgreeDist, sigma * 2.2);
-            const cutoff = Math.min(this._markerOutlierDistance, adaptiveCutoff);
+            const cutoff = Math.min(adaptiveOutlierDistance, adaptiveCutoff);
 
             const filtered = pool.filter(c => c.position.distanceTo(centroid) <= cutoff);
             if (filtered.length >= 1) pool = filtered;
@@ -1671,7 +1712,7 @@ export class RestorationEngine {
                 pool.length <= 1 ||
                 this._measurementConfidenceEMA < this._lowTrustConfidenceThreshold ||
                 this._poolSpreadEMA > this._lowTrustSpreadThreshold ||
-                this._viewAngleEMA > this._obliqueSoftLimitDeg;
+                this._viewAngleEMA > adaptiveObliqueSoftLimitDeg;
 
             if (lowTrust) {
                 const maxPosStep = this._maxTrustedLinearRate * measDt;
@@ -1776,6 +1817,20 @@ export class RestorationEngine {
         }
         this.isTracking = true;
         this.modelGroup.visible = true;
+
+        this._lastFusionStats = {
+            poolSize: pool.length,
+            candidateSize: candidates.length,
+            avgConfidence: this._measurementConfidenceEMA,
+            spread: this._poolSpreadEMA,
+            viewAngleDeg: this._viewAngleEMA,
+            adaptiveTrackWindow,
+            adaptiveOutlierDistance,
+            adaptiveConfidenceThreshold,
+            adaptiveObliqueSoftLimitDeg,
+            adaptiveObliqueRejectDeg,
+            adaptiveEnabled: this._adaptiveTuningEnabled
+        };
 
         // ── Status label ──
         const dist = this.modelGroup.position.length();
@@ -1908,7 +1963,49 @@ export class RestorationEngine {
                 ctx.fillText(src + confText, cx, cy + 28);
             }
 
+            if (Number.isFinite(m.cameraAngleDeg)) {
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.font = '10px monospace';
+                ctx.fillText('ang:' + Math.round(m.cameraAngleDeg) + '°', cx, cy + 38);
+            }
+
         }
+
+        this._drawDebugHud();
+    }
+
+    _drawDebugHud() {
+        if (!this._debugOverlayEnabled || !this.overlayCtx) return;
+        const ctx = this.overlayCtx;
+        const stats = this._lastFusionStats;
+        const w = this.overlay?.width || 0;
+        if (!w) return;
+
+        const lines = [];
+        lines.push(`trk:${this.isTracking ? 'ON' : 'OFF'} lock:${this._worldAnchorActive ? 'ON' : 'OFF'} markers:${(this._lastRawMarkers || []).length}`);
+        if (stats) {
+            lines.push(`pool ${stats.poolSize}/${stats.candidateSize} conf ${stats.avgConfidence.toFixed(2)} spread ${(stats.spread * 1000).toFixed(0)}mm`);
+            lines.push(`view ${Math.round(stats.viewAngleDeg)}° th ${stats.adaptiveConfidenceThreshold.toFixed(2)} out ${stats.adaptiveOutlierDistance.toFixed(2)}m`);
+            lines.push(`tw ${stats.adaptiveTrackWindow.toFixed(2)} soft/rej ${Math.round(stats.adaptiveObliqueSoftLimitDeg)}°/${Math.round(stats.adaptiveObliqueRejectDeg)}° ${stats.adaptiveEnabled ? 'AT' : 'FIX'}`);
+        }
+
+        const x = 12;
+        const y = 12;
+        const lineH = 14;
+        const boxH = 10 + lines.length * lineH;
+        const boxW = 360;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(x - 6, y - 4, boxW, boxH);
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = '#d8f7ff';
+        for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], x, y + i * lineH);
+        }
+        ctx.restore();
     }
 
     // ── Render loop ──────────────────────────────────────────────────────────
@@ -1931,6 +2028,7 @@ export class RestorationEngine {
         const now = performance.now();
 
         this._updateRenderPose(now);
+        this._drawDebugHud();
 
         // Throttle detection
         const interval = 1000 / Math.max(1, this._detectionFps);
