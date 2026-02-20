@@ -31,7 +31,7 @@ Write-Host "[2/3] Tunnel watchdog..."
 $u = ($env:USERNAME -replace '[^a-zA-Z0-9-]', '').ToLower()
 if ([string]::IsNullOrWhiteSpace($u)) { $u = 'user' }
 $subdomain = "webqrapp-live-$u"
-$fullUrl = "https://$subdomain.loca.lt/restoration-ar.html"
+$fullUrl = "https://$subdomain.loca.lt/mindar-app/index.html"
 
 $watchdog = Get-CimInstance Win32_Process |
   Where-Object {
@@ -58,6 +58,6 @@ $localIp = Get-LocalIPv4
 Write-Host ""
 Write-Host "URL: $fullUrl"
 Write-Host "PSW (se richiesta da loca.lt): $localIp"
-Write-Host "Local Endpoint: http://$localIp`:8080/restoration-ar.html"
+Write-Host "Local Endpoint: http://$localIp`:8080/mindar-app/index.html"
 Write-Host ""
 Write-Host "Lascia questa finestra aperta durante la sessione."
