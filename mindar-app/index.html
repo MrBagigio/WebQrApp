@@ -29,12 +29,8 @@
 
     <!-- tag target 栈 -->
     <a-entity mindar-image-target="targetIndex: 0">
-      <!-- house model; use your own GLB or fall back to simple geometry -->
-      <a-entity gltf-model="assets/house.glb" scale="0.1 0.1 0.1" rotation="0 180 0"
-                visible="false" id="house-model"></a-entity>
-      <!-- fallback: simple house made of box + pyramid roof -->
-      <a-box id="house-box" depth="0.5" height="0.3" width="0.5" color="#8B4513" position="0 0.15 0"></a-box>
-      <a-cone height="0.3" radius-bottom="0.4" radius-top="0" color="#A52A2A" rotation="0 0 0" position="0 0.45 0"></a-cone>
+      <!-- house model; use your own GLB here -->
+      <a-entity gltf-model="assets/house.glb" scale="0.1 0.1 0.1" rotation="0 180 0" id="house-model"></a-entity>
     </a-entity>
 
   </a-scene>
