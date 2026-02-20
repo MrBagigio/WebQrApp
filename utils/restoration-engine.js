@@ -70,7 +70,7 @@ export class RestorationEngine {
         this._poseTargetQuaternion = null;
         this._lastRenderTime = 0;
         this._renderPoseTau = 0.028;      // seconds, normal tracking
-        this._renderPoseTauLocked = 0.045; // seconds, more damping in lock mode
+        this._renderPoseTauLocked = 0.032; // seconds, damping in lock mode (faster response)
 
         // Measurement-rate aware anti-shake (handles abrupt phone motion spikes)
         this._lastPoseMeasurementTime = 0;
@@ -149,8 +149,11 @@ export class RestorationEngine {
         this._worldAnchorMaxAgreeDist = 0.08; // meters – markers must agree within this to buildup
         this._worldAnchorHoldPosEps = 0.006; // 6 mm: ignore tiny locked corrections
         this._worldAnchorHoldRotEps = 0.030; // ~1.7°: ignore tiny locked corrections
-        this._worldAnchorSingleMarkerPosAlpha = 0.015; // near-frozen under single marker
-        this._worldAnchorSingleMarkerRotAlpha = 0.018;
+        this._worldAnchorSingleMarkerPosAlpha = 0.045; // less frozen under single marker
+        this._worldAnchorSingleMarkerRotAlpha = 0.055;
+        this._fastRepositionPosDelta = 0.032; // meters
+        this._fastRepositionRotDelta = Math.PI / 12; // radians (~15°)
+        this._fastRepositionUnlockRatio = 0.55; // of break threshold
 
         // Jump/clamp protection
         this._maxPositionJump = 0.5;      // meters (was 0.25, too aggressive)
@@ -1745,8 +1748,8 @@ export class RestorationEngine {
 
             // In lock mode, aggressively suppress jitter while preserving world-relative tracking.
             if (this._worldAnchorActive) {
-                posAlpha *= 0.32;
-                rotAlpha *= 0.34;
+                posAlpha *= 0.45;
+                rotAlpha *= 0.48;
 
                 // Innovation gate around anchor reference: ignore tiny corrections.
                 const lockRefPos = this._worldAnchorPos || this.modelGroup.position;
@@ -1765,6 +1768,30 @@ export class RestorationEngine {
                 if (pool.length === 1) {
                     posAlpha = Math.min(posAlpha, this._worldAnchorSingleMarkerPosAlpha);
                     rotAlpha = Math.min(rotAlpha, this._worldAnchorSingleMarkerRotAlpha);
+                }
+            }
+
+            // Fast reposition intent: when target actually moves, prioritize responsiveness.
+            const fastRepositionIntent = (
+                (pool.length >= 2 && (posDelta > this._fastRepositionPosDelta || rotDelta > this._fastRepositionRotDelta)) ||
+                (this._worldAnchorActive && (posDelta > this._fastRepositionPosDelta * 1.35 || rotDelta > this._fastRepositionRotDelta * 1.35))
+            );
+
+            if (fastRepositionIntent) {
+                posAlpha = Math.max(posAlpha, Math.min(0.78, posAlpha * 2.2 + 0.09));
+                rotAlpha = Math.max(rotAlpha, Math.min(0.82, rotAlpha * 2.0 + 0.08));
+
+                // If lock is still active while board clearly moved, release lock earlier.
+                if (this._worldAnchorActive) {
+                    const unlockPos = this._worldAnchorBreakDistance * this._fastRepositionUnlockRatio;
+                    const unlockRot = this._worldAnchorBreakAngle * this._fastRepositionUnlockRatio;
+                    if (posDelta > unlockPos || rotDelta > unlockRot) {
+                        this._worldAnchorActive = false;
+                        this._worldAnchorBuildup = 0;
+                        this._worldAnchorPos = null;
+                        this._worldAnchorQuat = null;
+                        anchorStatus = '';
+                    }
                 }
             }
 
