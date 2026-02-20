@@ -19,13 +19,30 @@
     <code>assets/house.glb</code> e punta la camera sul target definito in
     <code>assets/targets.mind</code>.</div>
 
-  <a-scene mindar-image="imageTargetSrc: assets/targets.mind; uiScanning: yes;" 
+  <a-scene id="mindar-scene" mindar-image="imageTargetSrc: assets/targets.mind; uiScanning: yes;" 
             color-space="sRGB" 
             renderer="antialias: true;" 
             vr-mode-ui="enabled: false" 
             device-orientation-permission-ui="enabled: false">
     <!-- load fallback helper -->
     <script src="utils/house-fallback.js"></script>
+    <script src="utils/model-loader.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const sc = document.getElementById('mindar-scene');
+        const hint = document.getElementById('hint');
+        if (sc) {
+          sc.addEventListener('targetFound', () => {
+            console.log('MindAR target found');
+            if (hint) hint.textContent = 'TARGET RILEVATO';
+          });
+          sc.addEventListener('targetLost', () => {
+            console.log('MindAR target lost');
+            if (hint) hint.textContent = 'Punta il QR...';
+          });
+        }
+      });
+    </script>
 
     <!-- camera required by A-Frame -->
     <a-camera position="0 0 0"></a-camera>
