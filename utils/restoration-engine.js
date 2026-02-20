@@ -1405,6 +1405,12 @@ export class RestorationEngine {
         this._framesWithoutDetection = 0;
 
         // ── Step 1: Compute house-centre pose from each detected marker ──
+        const referencePosForGate = this._hasFirstPose
+            ? ((this._worldAnchorPos && this._worldAnchorActive)
+                ? this._worldAnchorPos.clone()
+                : this.modelGroup.position.clone())
+            : null;
+        const temporalSigma = Math.max(1e-4, this._fusionTrackWindow || 0.24);
         const candidates = [];
         for (const m of poseful) {
             const markerOffset = this._markerOffsetsForId(m.id);
@@ -1430,6 +1436,25 @@ export class RestorationEngine {
                 ? Math.max(0.01, Math.min(1, m.confidence))
                 : 0.8;
 
+            // Drop very low-quality detections early.
+            if (confidence < this._markerConfidenceThreshold) continue;
+
+            // Hard outlier guard versus current tracked pose/anchor reference.
+            if (referencePosForGate) {
+                const gateDist = housePos.distanceTo(referencePosForGate);
+                if (gateDist > (this._markerOutlierDistance * 2.0)) continue;
+            }
+
+            const sourceBoost = (m.source === 'opencv-pnp') ? 1.12 : ((m.source === 'mixed') ? 1.06 : 1.0);
+            const anchorMult = (Array.isArray(this._anchorIds) && this._anchorIds.includes(Number(m.id)))
+                ? this._anchorBoost
+                : 1.0;
+            const temporalDist = referencePosForGate ? housePos.distanceTo(referencePosForGate) : 0;
+            const temporalW = referencePosForGate
+                ? Math.exp(-(temporalDist * temporalDist) / (2 * temporalSigma * temporalSigma))
+                : 1.0;
+            const robustErrW = 1 / (1 + Math.pow(poseError / Math.max(0.01, this._maxPoseErrorForFusion), 2));
+
             candidates.push({
                 id: m.id,
                 position: housePos,
@@ -1437,7 +1462,11 @@ export class RestorationEngine {
                 perimeter,
                 poseError,
                 confidence,
-                weight: (perimeter * perimeter * confidence) / (1 + poseError * 10)
+                weight: ((perimeter * perimeter * confidence) / (1 + poseError * 8))
+                    * sourceBoost
+                    * anchorMult
+                    * temporalW
+                    * robustErrW
             });
         }
 
@@ -1459,7 +1488,8 @@ export class RestorationEngine {
                 varSum += c.weight * d * d;
             }
             const sigma = Math.sqrt(varSum / wSum);
-            const cutoff = Math.max(this._fusionAgreeDist, sigma * 2);
+            const adaptiveCutoff = Math.max(this._fusionAgreeDist, sigma * 2.2);
+            const cutoff = Math.min(this._markerOutlierDistance, adaptiveCutoff);
 
             const filtered = pool.filter(c => c.position.distanceTo(centroid) <= cutoff);
             if (filtered.length >= 1) pool = filtered;

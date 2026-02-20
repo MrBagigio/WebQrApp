@@ -392,10 +392,20 @@ function processFrame(msg) {
                     tvec = new cv.Mat();
                     inliers = new cv.Mat();
 
-                    // Use solvePnPRansac for robustness
-                    const ret = cv.solvePnPRansac(objPts, imgPts, camMat, dist, rvec, tvec, false, 100, 8.0, 0.99, inliers, cv.SOLVEPNP_ITERATIVE);
+                    // Use a planarity-aware method for square markers when available.
+                    const pnpMethod = (typeof cv.SOLVEPNP_IPPE_SQUARE !== 'undefined')
+                        ? cv.SOLVEPNP_IPPE_SQUARE
+                        : cv.SOLVEPNP_ITERATIVE;
+                    const ret = cv.solvePnPRansac(objPts, imgPts, camMat, dist, rvec, tvec, false, 100, 8.0, 0.99, inliers, pnpMethod);
 
                     if (ret) {
+                        // Optional non-linear refinement pass (if supported by this OpenCV build)
+                        try {
+                            if (typeof cv.solvePnPRefineLM === 'function') {
+                                cv.solvePnPRefineLM(objPts, imgPts, camMat, dist, rvec, tvec);
+                            }
+                        } catch (_) { /* refinement best-effort */ }
+
                         // compute reprojection error as poseError
                         proj = new cv.Mat();
                         cv.projectPoints(objPts, rvec, tvec, camMat, dist, proj);
@@ -411,7 +421,11 @@ function processFrame(msg) {
                         result.tvec = [tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]];
                         result.poseError = rms;
                         result.source = result.source || 'opencv-pnp';
-                        result.confidence = Math.max(0.0, Math.min(1.0, Math.max(0.1, 1.0 - (rms / 50))));
+                        result.confidence = computePoseConfidence({
+                            source: 'opencv-pnp',
+                            poseError: rms,
+                            corners: m.corners
+                        });
                         gotPose = true;
                     }
                 } catch (err) {
@@ -438,7 +452,11 @@ function processFrame(msg) {
                     result.tvec = [pose.bestTranslation[0], pose.bestTranslation[1], pose.bestTranslation[2]];
                     result.poseError = pose.bestError;
                     result.source = result.source || 'posit';
-                    result.confidence = result.confidence || Math.max(0.01, 1 / (1 + (result.poseError || 0) * 6));
+                    result.confidence = result.confidence || computePoseConfidence({
+                        source: 'posit',
+                        poseError: result.poseError,
+                        corners: m.corners
+                    });
                     gotPose = true;
                 }
             }
@@ -504,4 +522,36 @@ function rotMatToRvec(R) {
         k * (R[0][2] - R[2][0]),
         k * (R[1][0] - R[0][1])
     ];
+}
+
+function markerPerimeterPx(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) return 0;
+    let p = 0;
+    for (let i = 0; i < corners.length; i++) {
+        const a = corners[i];
+        const b = corners[(i + 1) % corners.length];
+        const dx = (a.x - b.x);
+        const dy = (a.y - b.y);
+        p += Math.hypot(dx, dy);
+    }
+    return p;
+}
+
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+function computePoseConfidence({ source, poseError, corners }) {
+    const perim = markerPerimeterPx(corners);
+    const perimN = clamp01((perim - 80) / 240);
+
+    if (source === 'opencv-pnp') {
+        // poseError is reprojection RMS in px
+        const errN = Math.min(3, Math.max(0, poseError / 8.0));
+        const base = Math.exp(-(errN * errN) * 0.9);
+        return Math.max(0.05, Math.min(1.0, 0.12 + 0.66 * base + 0.22 * perimN));
+    }
+
+    // POSIT error has different scale; use softer mapping.
+    const errN = Math.min(3.5, Math.max(0, poseError / 1.2));
+    const base = Math.exp(-errN * 0.95);
+    return Math.max(0.03, Math.min(0.92, 0.08 + 0.60 * base + 0.32 * perimN));
 }
