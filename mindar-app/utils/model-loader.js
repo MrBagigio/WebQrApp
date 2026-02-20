@@ -54,13 +54,10 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // try static files too
-  const path = 'assets/house';
+  const path = './assets/house';
   ['glb','gltf','fbx'].forEach(ext => {
     const url = `${path}.${ext}`;
-    console.log('checking static url', url);
-    fetch(url, {method:'HEAD'}).then(r=>{
-      console.log('HEAD', url, r.status);
-      if(r.ok) loadUrl(url);
-    }).catch(e=>console.warn('HEAD error',url,e));
+    console.log('attempting static load', url);
+    loadUrl(url); // loader callbacks will handle success/failure
   });
 });
