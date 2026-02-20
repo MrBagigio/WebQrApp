@@ -16,7 +16,10 @@ window.addEventListener('DOMContentLoaded', () => {
       console.log('loader success for', url);
       container.setAttribute('visible','true');
         const obj = (ext === 'fbx' ? g : g.scene);
-        // force materials to opaque in case opacity was zero
+        // diagnostics: compute bounding box
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = new THREE.Vector3(); box.getSize(size);
+        console.log('model bbox size', size);
         obj.traverse(o => {
           if (o.isMesh && o.material) {
             o.material.opacity = 1;
