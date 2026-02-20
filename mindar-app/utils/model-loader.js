@@ -28,12 +28,12 @@ window.addEventListener('DOMContentLoaded', () => {
         // automatically scale model so largest dimension ~1.5m (bigger for visibility)
         const maxd = Math.max(size.x, size.y, size.z);
         if (maxd > 0) {
-          // global multiplier allows manual override from console
-          const globalMult = window.houseScaleMultiplier || 1.0;
+          // global multiplier comes from UI slider (or console) and defaults to 1
+          const globalMult = parseFloat(window.houseScaleMultiplier) || 1.0;
           const targetSize = 1.5 * globalMult;
           const factor = targetSize / maxd;
           obj.scale.setScalar(factor);
-          console.log('scaling model by', factor, '(target', targetSize, 'm)');
+          console.log('scaling model by', factor, '(target', targetSize, 'm, mult', globalMult,')');
         }
         obj.traverse(o => {
           if (o.isMesh && o.material) {
