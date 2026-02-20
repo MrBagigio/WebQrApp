@@ -419,12 +419,14 @@ function processFrame(msg) {
 
                         result.rvec = [rvec.data64F[0], rvec.data64F[1], rvec.data64F[2]];
                         result.tvec = [tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]];
+                        result.cameraAngleDeg = viewAngleDegFromRvec(result.rvec);
                         result.poseError = rms;
                         result.source = result.source || 'opencv-pnp';
                         result.confidence = computePoseConfidence({
                             source: 'opencv-pnp',
                             poseError: rms,
-                            corners: m.corners
+                            corners: m.corners,
+                            cameraAngleDeg: result.cameraAngleDeg
                         });
                         gotPose = true;
                     }
@@ -450,12 +452,14 @@ function processFrame(msg) {
                 if (pose && pose.bestRotation && pose.bestTranslation) {
                     result.rvec = rotMatToRvec(pose.bestRotation);
                     result.tvec = [pose.bestTranslation[0], pose.bestTranslation[1], pose.bestTranslation[2]];
+                    result.cameraAngleDeg = viewAngleDegFromRotationMatrix(pose.bestRotation);
                     result.poseError = pose.bestError;
                     result.source = result.source || 'posit';
                     result.confidence = result.confidence || computePoseConfidence({
                         source: 'posit',
                         poseError: result.poseError,
-                        corners: m.corners
+                        corners: m.corners,
+                        cameraAngleDeg: result.cameraAngleDeg
                     });
                     gotPose = true;
                 }
@@ -539,19 +543,55 @@ function markerPerimeterPx(corners) {
 
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
-function computePoseConfidence({ source, poseError, corners }) {
+function computePoseConfidence({ source, poseError, corners, cameraAngleDeg }) {
     const perim = markerPerimeterPx(corners);
     const perimN = clamp01((perim - 80) / 240);
+    const viewDeg = Number.isFinite(cameraAngleDeg) ? cameraAngleDeg : 0;
+    const obliqueN = clamp01((viewDeg - 20) / 60); // 20°..80° maps to 0..1
+    const angleW = Math.max(0.08, 1 - obliqueN * obliqueN);
 
     if (source === 'opencv-pnp') {
         // poseError is reprojection RMS in px
         const errN = Math.min(3, Math.max(0, poseError / 8.0));
         const base = Math.exp(-(errN * errN) * 0.9);
-        return Math.max(0.05, Math.min(1.0, 0.12 + 0.66 * base + 0.22 * perimN));
+        return Math.max(0.04, Math.min(1.0, (0.10 + 0.62 * base + 0.28 * perimN) * angleW));
     }
 
     // POSIT error has different scale; use softer mapping.
     const errN = Math.min(3.5, Math.max(0, poseError / 1.2));
     const base = Math.exp(-errN * 0.95);
-    return Math.max(0.03, Math.min(0.92, 0.08 + 0.60 * base + 0.32 * perimN));
+    return Math.max(0.03, Math.min(0.92, (0.08 + 0.60 * base + 0.32 * perimN) * angleW));
+}
+
+function clampNegPos1(v) { return Math.max(-1, Math.min(1, v)); }
+
+function rotationMatrixFromRvec(rvec) {
+    const rx = rvec[0], ry = rvec[1], rz = rvec[2];
+    const theta = Math.hypot(rx, ry, rz);
+    if (theta < 1e-9) {
+        return [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]
+        ];
+    }
+    const kx = rx / theta, ky = ry / theta, kz = rz / theta;
+    const c = Math.cos(theta), s = Math.sin(theta), v = 1 - c;
+    return [
+        [kx * kx * v + c,      kx * ky * v - kz * s, kx * kz * v + ky * s],
+        [ky * kx * v + kz * s, ky * ky * v + c,      ky * kz * v - kx * s],
+        [kz * kx * v - ky * s, kz * ky * v + kx * s, kz * kz * v + c]
+    ];
+}
+
+function viewAngleDegFromRotationMatrix(R) {
+    // Marker normal in camera frame is R*[0,0,1] => 3rd column.
+    const nz = R[2][2];
+    const frontal = Math.abs(clampNegPos1(nz));
+    return Math.acos(frontal) * 180 / Math.PI;
+}
+
+function viewAngleDegFromRvec(rvec) {
+    const R = rotationMatrixFromRvec(rvec);
+    return viewAngleDegFromRotationMatrix(R);
 }

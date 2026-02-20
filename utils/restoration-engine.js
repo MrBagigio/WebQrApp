@@ -78,6 +78,10 @@ export class RestorationEngine {
         this._maxTrustedAngularRate = 5.2;  // rad/s
         this._lowTrustConfidenceThreshold = 0.58;
         this._lowTrustSpreadThreshold = 0.045;
+        this._viewAngleEMA = 0;
+        this._obliqueRejectAngleDeg = 84;    // reject near-grazing markers
+        this._obliqueSoftLimitDeg = 70;      // above this, heavily downweight
+        this._obliqueWeightFloor = 0.12;
 
         // EKF option for rotation smoothing (disabled by default)
         this._useQuatEKF = false;
@@ -1435,6 +1439,12 @@ export class RestorationEngine {
             const confidence = typeof m.confidence === 'number'
                 ? Math.max(0.01, Math.min(1, m.confidence))
                 : 0.8;
+            const cameraAngleDeg = Number.isFinite(m.cameraAngleDeg)
+                ? Math.max(0, Math.min(90, m.cameraAngleDeg))
+                : 0;
+
+            // Reject near-grazing observations: they are the #1 source of jitter spikes.
+            if (cameraAngleDeg > this._obliqueRejectAngleDeg) continue;
 
             // Drop very low-quality detections early.
             if (confidence < this._markerConfidenceThreshold) continue;
@@ -1454,6 +1464,8 @@ export class RestorationEngine {
                 ? Math.exp(-(temporalDist * temporalDist) / (2 * temporalSigma * temporalSigma))
                 : 1.0;
             const robustErrW = 1 / (1 + Math.pow(poseError / Math.max(0.01, this._maxPoseErrorForFusion), 2));
+            const obliqueN = Math.max(0, Math.min(1, (cameraAngleDeg - 15) / Math.max(1, (this._obliqueSoftLimitDeg - 15))));
+            const angleW = Math.max(this._obliqueWeightFloor, 1 - obliqueN * obliqueN * 0.9);
 
             candidates.push({
                 id: m.id,
@@ -1462,11 +1474,13 @@ export class RestorationEngine {
                 perimeter,
                 poseError,
                 confidence,
+                cameraAngleDeg,
                 weight: ((perimeter * perimeter * confidence) / (1 + poseError * 8))
                     * sourceBoost
                     * anchorMult
                     * temporalW
                     * robustErrW
+                    * angleW
             });
         }
 
@@ -1537,6 +1551,8 @@ export class RestorationEngine {
         this._measurementConfidenceEMA = (this._measurementConfidenceEMA * 0.85) + (avgConfidence * 0.15);
         const avgSpread = pool.reduce((s, c) => s + c.position.distanceTo(fusedPos), 0) / Math.max(1, pool.length);
         this._poolSpreadEMA = (this._poolSpreadEMA * 0.85) + (avgSpread * 0.15);
+        const avgViewAngle = pool.reduce((s, c) => s + (c.cameraAngleDeg || 0), 0) / Math.max(1, pool.length);
+        this._viewAngleEMA = (this._viewAngleEMA * 0.85) + (avgViewAngle * 0.15);
 
         // Guard: reject wild single-marker jumps
         if (this._hasFirstPose && pool.length < 2) {
@@ -1654,7 +1670,8 @@ export class RestorationEngine {
             const lowTrust =
                 pool.length <= 1 ||
                 this._measurementConfidenceEMA < this._lowTrustConfidenceThreshold ||
-                this._poolSpreadEMA > this._lowTrustSpreadThreshold;
+                this._poolSpreadEMA > this._lowTrustSpreadThreshold ||
+                this._viewAngleEMA > this._obliqueSoftLimitDeg;
 
             if (lowTrust) {
                 const maxPosStep = this._maxTrustedLinearRate * measDt;
@@ -1762,7 +1779,7 @@ export class RestorationEngine {
 
         // ── Status label ──
         const dist = this.modelGroup.position.length();
-        statusEl.textContent = `ID ${pool.map(m => m.id).join(',')} · ${dist.toFixed(2)} m${anchorStatus}`;
+        statusEl.textContent = `ID ${pool.map(m => m.id).join(',')} · ${dist.toFixed(2)} m · ang ${Math.round(this._viewAngleEMA)}°${anchorStatus}`;
         statusEl.style.color = 'var(--p-gold)';
         statusEl.classList.add('tracking');
     }
@@ -1803,6 +1820,7 @@ export class RestorationEngine {
         this._poseTargetQuaternion = null;
         this._lastRenderTime = 0;
         this._lastPoseMeasurementTime = 0;
+        this._viewAngleEMA = 0;
 
         this.isTracking = false;
         this.modelGroup.visible = false;
