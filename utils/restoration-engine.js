@@ -1510,9 +1510,10 @@ export class RestorationEngine {
     _handleTrackingLost(statusEl, now) {
         this._framesWithoutDetection++;
 
-        // If detection is missing for even one frame, hide/reset immediately to avoid
-        // the visual "model stuck to screen" effect while the user moves the phone.
-        if (this._framesWithoutDetection >= 1) {
+        // Tolerate a few dropped frames (hysteresis) before hiding the model.
+        // Mobile cameras often drop frames due to motion blur or autofocus.
+        // 10 frames is about 300ms at 30fps, enough to prevent rapid flickering.
+        if (this._framesWithoutDetection >= 10) {
             this._positionHistory = [];
             this._poseTargetPosition = null;
             this._poseTargetQuaternion = null;
