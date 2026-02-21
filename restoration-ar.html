@@ -521,7 +521,6 @@
 
     <script type="module">
         import { RestorationEngine } from './utils/restoration-engine.js';
-        import { SettingsPanel } from './public/js/components/SettingsPanel.js';
 
         const overlay = document.getElementById('start-overlay');
         const startBtn = document.getElementById('start-ar-btn');
@@ -552,6 +551,21 @@
                 engine._debugOverlayEnabled = false;
                 engine.showMarkerHelpers(false);
 
+                // Clean old persisted state to avoid carrying broken offsets/locks from previous builds
+                try {
+                    localStorage.removeItem('expear.markerOffsets.v4');
+                    localStorage.removeItem('expear.anchorIds');
+                    localStorage.removeItem('expear.anchorLock.v2');
+                } catch (_e) {}
+
+                // Hard-set neutral offset for marker 1 and persist it
+                engine.setMarkerOffsets({
+                    1: {
+                        pos: [0, 0, 0],
+                        quat: [0, 0, 0, 1]
+                    }
+                }, { persist: true });
+
                 if (typeof engine.setUseAprilTag === 'function') engine.setUseAprilTag(false);
                 if (typeof engine.setCornerFlowEnabled === 'function') engine.setCornerFlowEnabled(false);
                 if (typeof engine.setCornerSmoothing === 'function') engine.setCornerSmoothing(0);
@@ -560,9 +574,6 @@
                 await engine.init();
 
                 window.log('Engine pronto per ArUco ID 1!');
-                
-                // --- Init UI Components ---
-                new SettingsPanel(engine);
 
                 // Fade out start overlay
                 if (typeof gsap !== 'undefined') {

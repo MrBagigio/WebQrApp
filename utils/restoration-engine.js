@@ -1187,10 +1187,6 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
-            // Apply global model correction (yaw) to match physical orientation.
-            // Yaw: fix virtual house yaw inversion vs physical setup
-            // We use rotateOnWorldAxis to preserve any X/Z rotations applied by FBXLoader (e.g. Z-up to Y-up conversion)
-            object.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
@@ -1475,25 +1471,14 @@ export class RestorationEngine {
 
         // We only care about the first valid marker (ID 1)
         const m = poseful[0];
-        const markerOffset = this._markerOffsetsForId(m.id);
-        if (!markerOffset) return;
-
         const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
-        const { rotationOffset, positionOffset } = markerOffset;
 
-        // House orientation = marker orientation × rotation offset
-        const houseQuat = quaternion.clone().multiply(rotationOffset);
-        // House position = marker position − offset rotated into the scene
-        const housePos = position.clone().sub(
-            positionOffset.clone().applyQuaternion(houseQuat)
-        );
-
-        // Apply directly to model
-        this.modelGroup.position.copy(housePos);
-        this.modelGroup.quaternion.copy(houseQuat);
+        // Minimal single-marker mode: house sits at marker center and follows marker pose directly.
+        this.modelGroup.position.copy(position);
+        this.modelGroup.quaternion.copy(quaternion);
         
-        this._poseTargetPosition = housePos.clone();
-        this._poseTargetQuaternion = houseQuat.clone();
+        this._poseTargetPosition = position.clone();
+        this._poseTargetQuaternion = quaternion.clone();
 
         this.isTracking = true;
         this.modelGroup.visible = true;
