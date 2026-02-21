@@ -1176,10 +1176,9 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
-            // Apply global model correction (yaw + pitch) to match physical orientation.
-            // Pitch: flip upside-down model (roof down -> roof up)
+            // Apply global model correction (yaw) to match physical orientation.
             // Yaw: fix virtual house yaw inversion vs physical setup
-            object.rotation.set(Math.PI, Math.PI, 0, 'YXZ');
+            object.rotation.set(0, Math.PI, 0, 'YXZ');
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
