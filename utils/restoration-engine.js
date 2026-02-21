@@ -46,10 +46,10 @@ export class RestorationEngine {
         this._modelBBox = null;
         this._markerHelpers = {};
         this._showMarkerHelpers = false;
-        this._validMarkerIds = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
-        this._singleMarkerMode = false;
+        this._validMarkerIds = new Set([1]);
+        this._singleMarkerMode = true;
         this._singleMarkerOffsetTemplate = null;
-        this._detectionFps = 36;
+        this._detectionFps = 30;
         // Last raw markers received from worker (copy of data.markers)
         this._lastRawMarkers = [];
         this._lastDetectionTime = 0;
@@ -100,12 +100,8 @@ export class RestorationEngine {
         this._fusionAgreeDist = 0.14;     // meters - tighter marker agreement for stable fusion
         this._fusionTrackWindow = 0.24;   // meters - temporal gate around previous fused pose
         this._fusionPosSigma = 0.14;      // meters - distance weighting sigma for multi-marker blend
-        this._singleMarkerMaxJump = 0.10; // meters - stricter guard when only one marker is usable
+        this._singleMarkerMaxJump = 0.25; // meters - stricter guard when only one marker is usable (increased from 0.10 for better fast-motion tracking)
         this._maxPoseErrorForFusion = 0.35;
-        this._modelYawCorrection = Math.PI; // fix virtual house yaw inversion vs physical setup
-        this._modelYawCorrectionQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this._modelYawCorrection);
-        this._modelPitchCorrection = Math.PI; // flip upside-down model (roof down -> roof up)
-        this._modelPitchCorrectionQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this._modelPitchCorrection);
         this._trackingPosDeadband = 0.0035;  // meters, suppress micro-jitter when nearly static
         this._trackingRotDeadband = 0.020;   // radians, suppress tiny orientation shimmer
         this._anchorIds = null;           // null = use all markers; array -> prefer these ids
@@ -227,9 +223,25 @@ export class RestorationEngine {
                 });
             } catch (err) {
                 if (err.name === 'NotAllowedError') {
-                    throw new Error('Permesso negato. Controlla impostazioni browser.');
+                    throw new Error('Permesso negato. Controlla impostazioni browser o usa HTTPS.');
                 }
-                throw new Error('Camera indisponibile. Chiudi altre app.');
+                
+                // Fallback for local testing without HTTPS/Camera permissions
+                if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+                    this.log('Running on localhost without camera access. Using mock video stream.', 'warn');
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 640;
+                    canvas.height = 480;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '20px Arial';
+                    ctx.fillText('Mock Camera Stream', 50, 50);
+                    stream = canvas.captureStream(30);
+                } else {
+                    throw new Error('Camera indisponibile. Chiudi altre app o usa HTTPS.');
+                }
             }
 
             this.video.srcObject = stream;
@@ -1164,6 +1176,12 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
+            // Apply global model correction (yaw + pitch) to match physical orientation.
+            // Pitch: flip upside-down model (roof down -> roof up)
+            // Yaw: fix virtual house yaw inversion vs physical setup
+            object.rotation.set(Math.PI, Math.PI, 0, 'YXZ');
+            object.updateMatrixWorld(true);
+
             this._scaleModel(object, targetSize);
             object.traverse(child => {
                 if (child.isMesh) {
@@ -1261,7 +1279,7 @@ export class RestorationEngine {
     _createMarkerHelpers() {
         const size = (this.markerSizeMM / 1000) * 0.15;
         const colors = [0x00ff88, 0x00ccff, 0xffaa00, 0xff44aa, 0xaa00ff, 0xffff00, 0x00ffff, 0xff00ff];
-        const markerIds = [1, 2, 3, 4, 5, 6, 7, 8];
+        const markerIds = [1];
 
         for (let index = 0; index < markerIds.length; index++) {
             const id = markerIds[index];
@@ -1283,7 +1301,7 @@ export class RestorationEngine {
     }
 
     _repositionMarkerHelpers() {
-        const markerIds = [1, 2, 3, 4, 5, 6, 7, 8];
+        const markerIds = [1];
         for (const id of markerIds) {
             const h = this._markerHelpers[id];
             if (!h) continue;
@@ -1442,600 +1460,82 @@ export class RestorationEngine {
         if (!this.isTracking || !this.modelGroup || !this.modelGroup.visible) return;
         if (!this._poseTargetPosition || !this._poseTargetQuaternion) return;
 
-        const dt = this._lastRenderTime > 0 ? Math.max(1e-4, (now - this._lastRenderTime) / 1000) : (1 / 60);
-        this._lastRenderTime = now;
-
-        const tau = this._worldAnchorActive ? this._renderPoseTauLocked : this._renderPoseTau;
-        const alpha = Math.min(1, 1 - Math.exp(-dt / Math.max(1e-4, tau)));
-
-        this.modelGroup.position.lerp(this._poseTargetPosition, alpha);
-
-        const targetQuat = this._poseTargetQuaternion.clone();
-        if (this.modelGroup.quaternion.dot(targetQuat) < 0) {
-            targetQuat.x *= -1;
-            targetQuat.y *= -1;
-            targetQuat.z *= -1;
-            targetQuat.w *= -1;
-        }
-        this.modelGroup.quaternion.slerp(targetQuat, alpha);
+        // In single marker mode, we just snap to the target pose to avoid trailing
+        this.modelGroup.position.copy(this._poseTargetPosition);
+        this.modelGroup.quaternion.copy(this._poseTargetQuaternion);
     }
 
     /**
-     * Multi-marker fusion → World Anchor pose lock.
-     *
-     * Strategy:
-     *   1. Compute house-centre pose from every detected marker.
-     *   2. Robust outlier rejection (iterative σ-clipping).
-     *   3. Weighted fusion of surviving candidates.
-     *   4. World Anchor:
-     *        • Build confidence when ≥2 markers agree.
-     *        • Once confident → LOCK the model in world space.
-     *        • While locked: apply ultra-slow drift corrections only.
-     *        • Unlock if markers indicate large displacement (user moved board).
-     *   Result: rock-solid model the user can orbit freely.
+     * Single-marker tracking.
      */
-    _calculateAdaptiveParameters(aggregateNoise) {
-        // Base values
-        const baseTrackWindow = Math.max(0.08, this._fusionTrackWindow || 0.24);
-        const baseOutlierDist = Math.max(0.08, this._markerOutlierDistance || 0.35);
-        const baseConfidenceThreshold = Math.max(0.01, this._markerConfidenceThreshold || 0.15);
-        const baseSoftLimitDeg = Math.max(45, this._obliqueSoftLimitDeg || 70);
-        const baseRejectDeg = Math.max(65, this._obliqueRejectAngleDeg || 84);
-
-        if (!this._adaptiveTuningEnabled) {
-            return {
-                adaptiveTrackWindow: baseTrackWindow,
-                adaptiveOutlierDistance: baseOutlierDist,
-                adaptiveConfidenceThreshold: baseConfidenceThreshold,
-                adaptiveObliqueSoftLimitDeg: baseSoftLimitDeg,
-                adaptiveObliqueRejectDeg: baseRejectDeg
-            };
-        }
-
-        // Adaptive scaling based on noise/view conditions
-        return {
-            adaptiveTrackWindow: Math.max(0.12, Math.min(0.46, baseTrackWindow * (1 + aggregateNoise * 0.45))),
-            adaptiveOutlierDistance: Math.max(0.18, Math.min(0.52, baseOutlierDist * (1 - aggregateNoise * 0.18))),
-            adaptiveConfidenceThreshold: Math.max(0.08, Math.min(0.42,
-                baseConfidenceThreshold + (aggregateNoise * 0.08) + (this._viewAngleEMA > 66 ? 0.02 : 0)
-            )),
-            adaptiveObliqueSoftLimitDeg: Math.max(56, Math.min(76, baseSoftLimitDeg - aggregateNoise * 8.0)),
-            adaptiveObliqueRejectDeg: Math.max(72, Math.min(88, baseRejectDeg - aggregateNoise * 6.5))
-        };
-    }
-
     _applyTrackedPose(poseful, statusEl, now) {
-        const measDt = this._lastPoseMeasurementTime > 0
-            ? Math.max(1 / 240, (now - this._lastPoseMeasurementTime) / 1000)
-            : (1 / Math.max(1, this._detectionFps));
-        this._lastPoseMeasurementTime = now;
-
         this._lastTrackingTime = now;
         this._framesWithoutDetection = 0;
 
-        // Calculate noise metrics
-        const confNoise = Math.max(0, 1 - this._measurementConfidenceEMA);
-        const spreadNoise = Math.max(0, Math.min(1.2, this._poolSpreadEMA / 0.055));
-        const viewNoise = Math.max(0, Math.min(1.1, this._viewAngleEMA / 80));
-        const aggregateNoise = Math.max(0, Math.min(1.35, confNoise * 0.60 + spreadNoise * 0.30 + viewNoise * 0.10));
+        // We only care about the first valid marker (ID 1)
+        const m = poseful[0];
+        const markerOffset = this._markerOffsetsForId(m.id);
+        if (!markerOffset) return;
 
-        // Get adaptive or static thresholds
-        const {
-            adaptiveTrackWindow,
-            adaptiveOutlierDistance,
-            adaptiveConfidenceThreshold,
-            adaptiveObliqueSoftLimitDeg,
-            adaptiveObliqueRejectDeg
-        } = this._calculateAdaptiveParameters(aggregateNoise);
+        const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
+        const { rotationOffset, positionOffset } = markerOffset;
 
-        // ── Step 1: Compute house-centre pose from each detected marker ──
-        const referencePosForGate = this._hasFirstPose
-            ? ((this._worldAnchorPos && this._worldAnchorActive)
-                ? this._worldAnchorPos.clone()
-                : this.modelGroup.position.clone())
-            : null;
-        const temporalSigma = Math.max(1e-4, adaptiveTrackWindow);
-        const candidates = [];
-        for (const m of poseful) {
-            const markerOffset = this._markerOffsetsForId(m.id);
-            if (!markerOffset) continue;
+        // House orientation = marker orientation × rotation offset
+        const houseQuat = quaternion.clone().multiply(rotationOffset);
+        // House position = marker position − offset rotated into the scene
+        const housePos = position.clone().sub(
+            positionOffset.clone().applyQuaternion(houseQuat)
+        );
 
-            const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
-            const { rotationOffset, positionOffset } = markerOffset;
+        // Apply directly to model
+        this.modelGroup.position.copy(housePos);
+        this.modelGroup.quaternion.copy(houseQuat);
+        
+        this._poseTargetPosition = housePos.clone();
+        this._poseTargetQuaternion = houseQuat.clone();
 
-            // House orientation = marker orientation × rotation offset
-            const houseQuat = quaternion.clone().multiply(rotationOffset);
-            // House position = marker position − offset rotated into the scene
-            const housePos = position.clone().sub(
-                positionOffset.clone().applyQuaternion(houseQuat)
-            );
-
-            const perimeter = this._markerPerimeter(m.corners || []);
-            if (perimeter < this._minMarkerPerimeter) continue;
-
-            const poseError = typeof m.poseError === 'number' ? m.poseError : 0;
-            if (poseError > this._maxPoseErrorForFusion) continue;
-
-            const confidence = typeof m.confidence === 'number'
-                ? Math.max(0.01, Math.min(1, m.confidence))
-                : 0.8;
-            const cameraAngleDeg = Number.isFinite(m.cameraAngleDeg)
-                ? Math.max(0, Math.min(90, m.cameraAngleDeg))
-                : 0;
-
-            // Reject near-grazing observations: they are the #1 source of jitter spikes.
-            if (cameraAngleDeg > adaptiveObliqueRejectDeg) continue;
-
-            // Drop very low-quality detections early.
-            if (confidence < adaptiveConfidenceThreshold) continue;
-
-            // Hard outlier guard versus current tracked pose/anchor reference.
-            if (referencePosForGate) {
-                const gateDist = housePos.distanceTo(referencePosForGate);
-                if (gateDist > (adaptiveOutlierDistance * 2.0)) continue;
-            }
-
-            const sourceBoost = (m.source === 'opencv-pnp') ? 1.12 : ((m.source === 'mixed') ? 1.06 : 1.0);
-            const anchorMult = (Array.isArray(this._anchorIds) && this._anchorIds.includes(Number(m.id)))
-                ? this._anchorBoost
-                : 1.0;
-            const temporalDist = referencePosForGate ? housePos.distanceTo(referencePosForGate) : 0;
-            const temporalW = referencePosForGate
-                ? Math.exp(-(temporalDist * temporalDist) / (2 * temporalSigma * temporalSigma))
-                : 1.0;
-            const robustErrW = 1 / (1 + Math.pow(poseError / Math.max(0.01, this._maxPoseErrorForFusion), 2));
-            const obliqueN = Math.max(0, Math.min(1, (cameraAngleDeg - 15) / Math.max(1, (adaptiveObliqueSoftLimitDeg - 15))));
-            const angleW = Math.max(this._obliqueWeightFloor, 1 - obliqueN * obliqueN * 0.9);
-
-            candidates.push({
-                id: m.id,
-                position: housePos,
-                quaternion: houseQuat,
-                perimeter,
-                poseError,
-                confidence,
-                cameraAngleDeg,
-                weight: ((perimeter * perimeter * confidence) / (1 + poseError * 8))
-                    * sourceBoost
-                    * anchorMult
-                    * temporalW
-                    * robustErrW
-                    * angleW
-            });
-        }
-
-        if (!candidates.length) return;
-
-        // ── Step 2: Robust outlier rejection (iterative σ-clip) ──
-        // Compute weighted centroid, then remove candidates > 2σ. Repeat once.
-        let pool = candidates.slice();
-        for (let pass = 0; pass < 2 && pool.length > 1; pass++) {
-            const centroid = new THREE.Vector3();
-            let wSum = 0;
-            for (const c of pool) { centroid.addScaledVector(c.position, c.weight); wSum += c.weight; }
-            centroid.divideScalar(wSum);
-
-            // Weighted standard deviation of distances
-            let varSum = 0;
-            for (const c of pool) {
-                const d = c.position.distanceTo(centroid);
-                varSum += c.weight * d * d;
-            }
-            const sigma = Math.sqrt(varSum / wSum);
-            const adaptiveCutoff = Math.max(this._fusionAgreeDist, sigma * 2.2);
-            const cutoff = Math.min(adaptiveOutlierDistance, adaptiveCutoff);
-
-            const filtered = pool.filter(c => c.position.distanceTo(centroid) <= cutoff);
-            if (filtered.length >= 1) pool = filtered;
-        }
-
-        // Sort survivors by weight
-        pool.sort((a, b) => b.weight - a.weight);
-        const best = pool[0];
-
-        // ── Step 3: Weighted fusion of surviving candidates ──
-        let fusedPos, fusedQuat;
-
-        if (pool.length === 1) {
-            fusedPos = pool[0].position.clone();
-            fusedQuat = pool[0].quaternion.clone();
-        } else {
-            fusedPos = new THREE.Vector3();
-            let wSum = 0;
-            let qx = 0, qy = 0, qz = 0, qw = 0;
-            const refQ = this._hasFirstPose ? this.modelGroup.quaternion.clone() : best.quaternion;
-
-            for (const c of pool) {
-                const w = c.weight;
-                fusedPos.addScaledVector(c.position, w);
-
-                // Sign-aligned quaternion accumulation
-                const q = c.quaternion.clone();
-                if (q.dot(refQ) < 0) { q.x *= -1; q.y *= -1; q.z *= -1; q.w *= -1; }
-                qx += q.x * w;
-                qy += q.y * w;
-                qz += q.z * w;
-                qw += q.w * w;
-
-                wSum += w;
-            }
-            fusedPos.divideScalar(wSum);
-            fusedQuat = new THREE.Quaternion(
-                qx / wSum, qy / wSum, qz / wSum, qw / wSum
-            ).normalize();
-        }
-
-        // Temporal robustification: median position over short window + EMA quality metrics
-        fusedPos = this._pushAndMedianPosition(fusedPos);
-        const avgConfidence = pool.reduce((s, c) => s + c.confidence, 0) / Math.max(1, pool.length);
-        this._measurementConfidenceEMA = (this._measurementConfidenceEMA * 0.85) + (avgConfidence * 0.15);
-        const avgSpread = pool.reduce((s, c) => s + c.position.distanceTo(fusedPos), 0) / Math.max(1, pool.length);
-        this._poolSpreadEMA = (this._poolSpreadEMA * 0.85) + (avgSpread * 0.15);
-        const avgViewAngle = pool.reduce((s, c) => s + (c.cameraAngleDeg || 0), 0) / Math.max(1, pool.length);
-        this._viewAngleEMA = (this._viewAngleEMA * 0.85) + (avgViewAngle * 0.15);
-
-        // Guard: reject wild single-marker jumps
-        if (this._hasFirstPose && pool.length < 2) {
-            const jump = this.modelGroup.position.distanceTo(fusedPos);
-            if (jump > this._singleMarkerMaxJump) {
-                statusEl.textContent = 'RICERCA...';
-                statusEl.style.color = 'var(--p-dim)';
-                return;
-            }
-        }
-
-        // Apply global model correction (yaw + pitch) to match physical orientation.
-        if (this._modelYawCorrectionQuat || this._modelPitchCorrectionQuat) {
-            const correctedQuat = fusedQuat.clone();
-            if (this._modelYawCorrectionQuat) correctedQuat.multiply(this._modelYawCorrectionQuat);
-            if (this._modelPitchCorrectionQuat) correctedQuat.multiply(this._modelPitchCorrectionQuat);
-            fusedQuat = correctedQuat;
-        }
-
-        // ── Step 4: Update marker helpers ──
-        for (const hid in this._markerHelpers) {
-            const hh = this._markerHelpers[hid];
-            hh.visible = this._showMarkerHelpers;
-            hh.material.opacity = 0.35;
-            hh.scale.set(1, 1, 1);
-        }
-        for (const c of candidates) {
-            const h = this._markerHelpers[c.id];
-            if (h) {
-                h.material.opacity = 1;
-                h.scale.set(1.5, 1.5, 1.5);
-                h.visible = this._showMarkerHelpers;
-            }
-        }
-
-        // ── Step 5: No-lock logic ──
-        // By requirement, all lock behaviors are disabled. Pose must remain marker-driven.
-
-        let finalPos, finalQuat;
-        let anchorStatus = ''; // lock disabled -> always empty
-        const lockEnabled = false;
-
-        // Force disable World Anchor if in single-marker mode to prevent "floating"
-        const isSingleMarkerMode = !!this._singleMarkerMode;
-        if (isSingleMarkerMode) {
-             this._worldAnchorActive = false;
-             this._worldAnchorBuildup = 0;
-        }
-
-        this._worldAnchorActive = false;
-        this._worldAnchorBuildup = 0;
-
-        if (!this._hasFirstPose) {
-            // First frame: snap instantly, begin anchor buildup
-            finalPos = fusedPos.clone();
-            finalQuat = fusedQuat.clone();
-            this._hasFirstPose = true;
-            this._worldAnchorBuildup = 0;
-            this._worldAnchorActive = false;
-        } else if (lockEnabled && this._worldAnchorActive) {
-            // IMPORTANT:
-            // Do NOT freeze modelGroup pose in camera-space here, otherwise the
-            // model appears to stick to the phone. Keep lock as a STABILIZATION
-            // mode only, while still following marker-derived fused pose.
-            const refPos = this._worldAnchorPos || this.modelGroup.position;
-            const refQuat = this._worldAnchorQuat || this.modelGroup.quaternion;
-            const driftDist = refPos.distanceTo(fusedPos);
-            const driftAngle = refQuat.angleTo(fusedQuat);
-
-            if (driftDist > this._worldAnchorBreakDistance ||
-                driftAngle > this._worldAnchorBreakAngle) {
-                // Large deviation → user moved the board / relocalization jump
-                this._worldAnchorActive = false;
-                this._worldAnchorBuildup = 0;
-                this._worldAnchorPos = null;
-                this._worldAnchorQuat = null;
-                this.log('World Anchor SBLOCCATO (drift ' + driftDist.toFixed(3) + 'm / ' + (driftAngle * 180 / Math.PI).toFixed(1) + '°)');
-            } else {
-                // Keep only a slow reference for drift checks (not used as output pose)
-                const markerBoost = Math.min(2.0, pool.length / 2);
-                const posA = this._worldAnchorCorrectionAlpha * markerBoost;
-                const rotA = this._worldAnchorRotCorrectionAlpha * markerBoost;
-
-                this._worldAnchorPos = (this._worldAnchorPos || fusedPos.clone()).lerp(fusedPos, posA);
-                this._worldAnchorQuat = (this._worldAnchorQuat || fusedQuat.clone());
-                if (this._worldAnchorQuat.dot(fusedQuat) < 0) {
-                    fusedQuat.x *= -1; fusedQuat.y *= -1;
-                    fusedQuat.z *= -1; fusedQuat.w *= -1;
-                }
-                this._worldAnchorQuat.slerp(fusedQuat, rotA);
-                anchorStatus = ' \u{1F512}'; // 🔒 stabilization mode
-            }
-        }
-
-        // If not locked (or just unlocked), use adaptive smoothing
-        if (!finalPos) {
-            const posDelta = this.modelGroup.position.distanceTo(fusedPos);
-            const rotDelta = this.modelGroup.quaternion.angleTo(fusedQuat);
-            const linearRate = posDelta / Math.max(1e-4, measDt);
-            const angularRate = rotDelta / Math.max(1e-4, measDt);
-
-            // Deadband near rest
-            if (posDelta < this._trackingPosDeadband) fusedPos = this.modelGroup.position.clone();
-            if (rotDelta < this._trackingRotDeadband) fusedQuat = this.modelGroup.quaternion.clone();
-
-            // Adaptive alpha: more markers → faster convergence, motion → more responsive
-            const motionBoost = Math.max(
-                Math.min(1, posDelta / 0.06),
-                Math.min(1, rotDelta / (Math.PI / 10))
-            );
-            const markerCountFactor = Math.min(1.0, 0.4 + pool.length * 0.15);
-            let posAlpha = Math.min(0.55, 0.12 + markerCountFactor * 0.15 + motionBoost * 0.28);
-            let rotAlpha = Math.min(0.65, 0.10 + markerCountFactor * 0.15 + motionBoost * 0.35);
-
-            // Noise-adaptive damping: high spread / low confidence => stronger smoothing
-            const spreadN = Math.min(1.4, this._poolSpreadEMA / 0.05);
-            const confN = Math.max(0, 1 - this._measurementConfidenceEMA);
-            const noiseLevel = Math.min(1.6, spreadN * 0.65 + confN * 1.05);
-            const noiseDamp = Math.max(0.28, 1 - noiseLevel * 0.48);
-            posAlpha *= noiseDamp;
-            rotAlpha *= Math.max(0.30, noiseDamp * 0.96);
-
-            // Under low-trust measurements, clamp unrealistically fast innovations
-            // caused by shaky phone motion + weak marker geometry.
-            const lowTrust =
-                pool.length <= 1 ||
-                this._measurementConfidenceEMA < this._lowTrustConfidenceThreshold ||
-                this._poolSpreadEMA > this._lowTrustSpreadThreshold ||
-                this._viewAngleEMA > adaptiveObliqueSoftLimitDeg;
-
-            if (lowTrust) {
-                const maxPosStep = this._maxTrustedLinearRate * measDt;
-                const maxRotStep = this._maxTrustedAngularRate * measDt;
-
-                if (posDelta > maxPosStep && maxPosStep > 0) {
-                    const t = Math.max(0, Math.min(1, maxPosStep / posDelta));
-                    fusedPos = this.modelGroup.position.clone().lerp(fusedPos, t);
-                }
-
-                if (rotDelta > maxRotStep && maxRotStep > 0) {
-                    const t = Math.max(0, Math.min(1, maxRotStep / rotDelta));
-                    const clampedQuat = this.modelGroup.quaternion.clone();
-                    if (clampedQuat.dot(fusedQuat) < 0) {
-                        fusedQuat.x *= -1; fusedQuat.y *= -1;
-                        fusedQuat.z *= -1; fusedQuat.w *= -1;
-                    }
-                    fusedQuat = clampedQuat.slerp(fusedQuat.clone(), t);
-                }
-
-                // Extra damping in low-trust high-rate conditions
-                const shock = Math.min(1.5, (linearRate / 2.5) * 0.55 + (angularRate / 4.0) * 0.65);
-                const shockDamp = Math.max(0.22, 1 - shock * 0.42);
-                posAlpha *= shockDamp;
-                rotAlpha *= Math.max(0.24, shockDamp * 0.95);
-            }
-
-            // Single-marker: more conservative
-            if (pool.length === 1) { 
-                // In single marker mode, we trust the marker update more than history to avoid "floating"
-                // Increase responsiveness (alpha closer to 1) rather than damping
-                if (isSingleMarkerMode) {
-                   posAlpha = 0.8; 
-                   rotAlpha = 0.8;
-                } else {
-                   posAlpha *= 0.75; rotAlpha *= 0.80; 
-                }
-            }
-
-            // In lock mode, aggressively suppress jitter while preserving world-relative tracking.
-            if (lockEnabled && this._worldAnchorActive) {
-                posAlpha *= 0.45;
-                rotAlpha *= 0.48;
-
-                // Innovation gate around anchor reference: ignore tiny corrections.
-                const lockRefPos = this._worldAnchorPos || this.modelGroup.position;
-                const lockRefQuat = this._worldAnchorQuat || this.modelGroup.quaternion;
-                const lockPosErr = lockRefPos.distanceTo(fusedPos);
-                const lockRotErr = lockRefQuat.angleTo(fusedQuat);
-
-                if (lockPosErr < this._worldAnchorHoldPosEps) {
-                    fusedPos = this.modelGroup.position.clone();
-                }
-                if (lockRotErr < this._worldAnchorHoldRotEps) {
-                    fusedQuat = this.modelGroup.quaternion.clone();
-                }
-
-                // If only one marker is currently available while locked, almost freeze pose.
-                if (pool.length === 1) {
-                    posAlpha = Math.min(posAlpha, this._worldAnchorSingleMarkerPosAlpha);
-                    rotAlpha = Math.min(rotAlpha, this._worldAnchorSingleMarkerRotAlpha);
-                }
-            }
-
-            // Fast reposition intent: when target actually moves, prioritize responsiveness.
-            const fastRepositionIntent = (
-                (pool.length >= 2 && (posDelta > this._fastRepositionPosDelta || rotDelta > this._fastRepositionRotDelta)) ||
-                (this._worldAnchorActive && (posDelta > this._fastRepositionPosDelta * 1.35 || rotDelta > this._fastRepositionRotDelta * 1.35))
-            );
-
-            if (fastRepositionIntent) {
-                posAlpha = Math.max(posAlpha, Math.min(0.78, posAlpha * 2.2 + 0.09));
-                rotAlpha = Math.max(rotAlpha, Math.min(0.82, rotAlpha * 2.0 + 0.08));
-
-                // If lock is still active while board clearly moved, release lock earlier.
-                if (lockEnabled && this._worldAnchorActive) {
-                    const unlockPos = this._worldAnchorBreakDistance * this._fastRepositionUnlockRatio;
-                    const unlockRot = this._worldAnchorBreakAngle * this._fastRepositionUnlockRatio;
-                    if (posDelta > unlockPos || rotDelta > unlockRot) {
-                        this._worldAnchorActive = false;
-                        this._worldAnchorBuildup = 0;
-                        this._worldAnchorPos = null;
-                        this._worldAnchorQuat = null;
-                        anchorStatus = '';
-                    }
-                }
-            }
-
-            finalPos = this.modelGroup.position.clone().lerp(fusedPos, posAlpha);
-
-            // Ensure shortest-path slerp
-            if (this.modelGroup.quaternion.dot(fusedQuat) < 0) {
-                fusedQuat.x *= -1; fusedQuat.y *= -1;
-                fusedQuat.z *= -1; fusedQuat.w *= -1;
-            }
-            finalQuat = this.modelGroup.quaternion.clone().slerp(fusedQuat, rotAlpha);
-
-            // ── Build up anchor confidence ──
-            if (lockEnabled && pool.length >= this._worldAnchorMinMarkers) {
-                // Check that candidates agree with each other tightly
-                let maxSpread = 0;
-                for (let i = 0; i < pool.length; i++) {
-                    for (let j = i + 1; j < pool.length; j++) {
-                        maxSpread = Math.max(maxSpread, pool[i].position.distanceTo(pool[j].position));
-                    }
-                }
-                if (maxSpread <= this._worldAnchorMaxAgreeDist) {
-                    this._worldAnchorBuildup++;
-                } else {
-                    this._worldAnchorBuildup = Math.max(0, this._worldAnchorBuildup - 1);
-                }
-
-                // Engage lock when buildup reaches target
-                if (this._worldAnchorBuildup >= this._worldAnchorBuildupTarget) {
-                    this._worldAnchorActive = true;
-                    this._worldAnchorPos = fusedPos.clone();
-                    this._worldAnchorQuat = fusedQuat.clone();
-                    this.log('World Anchor BLOCCATO (' + pool.length + ' marker, spread ' + maxSpread.toFixed(3) + 'm)');
-                }
-            } else {
-                // Fewer markers → decay buildup (don't lock on single marker)
-                this._worldAnchorBuildup = Math.max(0, this._worldAnchorBuildup - 2);
-            }
-        }
-
-        // ── Step 6: Update target pose (render loop applies high-frequency smoothing) ──
-        if (isSingleMarkerMode) {
-            // Single-marker mode: apply pose directly to avoid visible trailing/sticking.
-            this.modelGroup.position.copy(finalPos);
-            this.modelGroup.quaternion.copy(finalQuat);
-            this._poseTargetPosition = finalPos.clone();
-            this._poseTargetQuaternion = finalQuat.clone();
-        } else if (!this._poseTargetPosition || !this._poseTargetQuaternion || !this._hasFirstPose) {
-            this._poseTargetPosition = finalPos.clone();
-            this._poseTargetQuaternion = finalQuat.clone();
-            this.modelGroup.position.copy(finalPos);
-            this.modelGroup.quaternion.copy(finalQuat);
-        } else {
-            this._poseTargetPosition.copy(finalPos);
-            this._poseTargetQuaternion.copy(finalQuat);
-        }
         this.isTracking = true;
         this.modelGroup.visible = true;
 
-        this._lastFusionStats = {
-            poolSize: pool.length,
-            candidateSize: candidates.length,
-            avgConfidence: this._measurementConfidenceEMA,
-            spread: this._poolSpreadEMA,
-            viewAngleDeg: this._viewAngleEMA,
-            adaptiveTrackWindow,
-            adaptiveOutlierDistance,
-            adaptiveConfidenceThreshold,
-            adaptiveObliqueSoftLimitDeg,
-            adaptiveObliqueRejectDeg,
-            adaptiveEnabled: this._adaptiveTuningEnabled
-        };
+        // Update marker helpers
+        for (const hid in this._markerHelpers) {
+            const hh = this._markerHelpers[hid];
+            if (Number(hid) === Number(m.id)) {
+                hh.material.opacity = 1;
+                hh.scale.set(1.5, 1.5, 1.5);
+                hh.visible = this._showMarkerHelpers;
+            } else {
+                hh.visible = false;
+            }
+        }
 
-        // ── Status label ──
+        // Status label
         const dist = this.modelGroup.position.length();
-        statusEl.textContent = `ID ${pool.map(m => m.id).join(',')} · ${dist.toFixed(2)} m · ang ${Math.round(this._viewAngleEMA)}°${anchorStatus}`;
+        statusEl.textContent = `ID ${m.id} · ${dist.toFixed(2)} m`;
         statusEl.style.color = 'var(--p-gold)';
         statusEl.classList.add('tracking');
     }
 
     /** Handle lost-tracking with hysteresis timeout. */
     _handleTrackingLost(statusEl, now) {
-        const isSingleMarkerMode = !!this._singleMarkerMode;
         this._framesWithoutDetection++;
-        const elapsed = now - this._lastTrackingTime;
 
-        // In single-marker mode, do not keep stale camera-space pose alive.
         // If detection is missing for even one frame, hide/reset immediately to avoid
         // the visual "model stuck to screen" effect while the user moves the phone.
-        if (isSingleMarkerMode && this._framesWithoutDetection >= 1) {
-            this._worldAnchorActive = false;
-            this._worldAnchorBuildup = 0;
-            this._worldAnchorPos = null;
-            this._worldAnchorQuat = null;
+        if (this._framesWithoutDetection >= 1) {
             this._positionHistory = [];
             this._poseTargetPosition = null;
             this._poseTargetQuaternion = null;
             this._lastRenderTime = 0;
             this._lastPoseMeasurementTime = 0;
-            this._viewAngleEMA = 0;
 
             this.isTracking = false;
-            this.modelGroup.visible = false;
+            if (this.modelGroup) this.modelGroup.visible = false;
             this._hasFirstPose = false;
             statusEl.textContent = 'RICERCA TARGET...';
             statusEl.style.color = 'var(--p-dim)';
             statusEl.classList.remove('tracking');
-            return;
         }
-
-        if (this._lastTrackingTime > 0 && elapsed < this._trackingTimeout) {
-            // IMPORTANT: avoid camera-follow illusion while locked and markers are missing.
-            // If lock is active but detections are temporarily gone, hide model quickly
-            // instead of freezing last camera-space pose.
-            if (this._worldAnchorActive && this._framesWithoutDetection > 1) {
-                this.isTracking = false;
-                this.modelGroup.visible = false;
-                this._poseTargetPosition = null;
-                this._poseTargetQuaternion = null;
-                statusEl.textContent = 'RICERCA MARKER (LOCK IN PAUSA)...';
-                statusEl.style.color = 'var(--p-dim)';
-                return;
-            }
-
-            if (this._framesWithoutDetection > 3) {
-                statusEl.textContent = this._worldAnchorActive ? 'ANCORATO \u{1F512}' : 'RICERCA...';
-                statusEl.style.color = 'var(--p-dim)';
-            }
-            return;
-        }
-
-        // Fully lost: reset world anchor so next detection starts fresh
-        this._worldAnchorActive = false;
-        this._worldAnchorBuildup = 0;
-        this._worldAnchorPos = null;
-        this._worldAnchorQuat = null;
-        this._positionHistory = [];
-        this._poseTargetPosition = null;
-        this._poseTargetQuaternion = null;
-        this._lastRenderTime = 0;
-        this._lastPoseMeasurementTime = 0;
-        this._viewAngleEMA = 0;
-
-        this.isTracking = false;
-        this.modelGroup.visible = false;
-        this._hasFirstPose = false;  // next detection will snap instantly
-        statusEl.textContent = 'RICERCA TARGET...';
-        statusEl.style.color = 'var(--p-dim)';
-        statusEl.classList.remove('tracking');
     }
 
     // ── Overlay drawing ──────────────────────────────────────────────────────
@@ -2337,193 +1837,6 @@ export class RestorationEngine {
         return (this._lastRawMarkers || []).map(m => ({ id: m.id, rvec: m.rvec ? m.rvec.slice() : null, tvec: m.tvec ? m.tvec.slice() : null, poseError: m.poseError, distance: m.distance }));
     }
 
-    // Internal: try to auto-create an anchor-lock when the anchor marker is stable for several frames
-    _maybeUpdateAnchorLock(poseful, bestMarkerId, fusedPos, fusedQuat) {
-        if (!this._anchorLockEnabled || !this._anchorAutoLockEnabled) return;
-        // prefer explicit anchorIds if provided
-        const candId = Array.isArray(this._anchorIds) && this._anchorIds.length ? this._anchorIds[0] : bestMarkerId;
-        if (typeof candId === 'undefined' || candId === null) return;
-
-        // compute presence & average error from markerHistory
-        let framesSeen = 0, sumErr = 0;
-        for (const f of this._markerHistory) {
-            if (f && f[candId]) { framesSeen++; sumErr += (f[candId].poseError || 0); }
-        }
-        if (framesSeen < Math.max(1, Math.round(this._markerHistorySize * 0.5))) return; // not enough data
-        const avgErr = sumErr / Math.max(1, framesSeen);
-
-        if (framesSeen >= this._anchorAutoLockMinFrames && avgErr <= this._anchorAutoLockMaxPoseError) {
-            // create lock (centered on the fused model pose)
-            if (!this._anchorLock) {
-                this._anchorLock = {
-                    id: candId,
-                    position: fusedPos.clone(),
-                    quaternion: fusedQuat.clone(),
-                    createdAt: Date.now()
-                };
-                this._saveAnchorLockToStorage();
-                this.log('Auto anchor-lock creato per marker ' + candId);
-            }
-        }
-    }
-
-    // Return fused model distance (meters)
-    getFusedDistance() { return (this.modelGroup && this.modelGroup.position) ? this.modelGroup.position.length() : 0; }
-
-    // Log last raw markers to console (debug helper)
-    logLastRawMarkers() { console.table(this.getLastRawMarkers()); }
-
-    // --- WebXR helpers: support detection, hit-test placement and simple persistence ---
-    supportsWebXR() {
-        return (typeof navigator !== 'undefined' && navigator.xr && navigator.xr.isSessionSupported)
-            ? navigator.xr.isSessionSupported('immersive-ar')
-            : Promise.resolve(false);
-    }
-
-    async startWebXR({ persistPlacement = true } = {}) {
-        if (this._xrActive) return;
-        if (!navigator.xr) throw new Error('WebXR non disponibile');
-        const supported = await navigator.xr.isSessionSupported('immersive-ar');
-        if (!supported) throw new Error('immersive-ar non supportato dal device');
-        try {
-            const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'] });
-            this._xrSession = session;
-            this._xrActive = true;
-
-            try { await this.renderer.xr.setSession(session); } catch (e) { /* ignore */ }
-
-            this._xrRefSpace = await session.requestReferenceSpace('local');
-            const viewerSpace = await session.requestReferenceSpace('viewer');
-            this._xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-
-            // Reticle shown at hit-test pose
-            const geo = new THREE.RingGeometry(0.06, 0.08, 32);
-            const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
-            this._xrReticle = new THREE.Mesh(geo, mat);
-            this._xrReticle.rotation.x = -Math.PI / 2;
-            this._xrReticle.visible = false;
-            this.scene.add(this._xrReticle);
-
-            // XR frame loop
-            const onXRFrame = (time, xrFrame) => {
-                if (!this._xrActive) return;
-                if (xrFrame && this._xrHitTestSource) {
-                    const results = xrFrame.getHitTestResults(this._xrHitTestSource);
-                    if (results.length > 0) {
-                        const hit = results[0];
-                        const pose = hit.getPose(this._xrRefSpace);
-                        if (pose) {
-                            this._xrReticle.visible = true;
-                            this._xrReticle.position.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
-                            this._xrReticle.quaternion.set(pose.transform.orientation.x, pose.transform.orientation.y, pose.transform.orientation.z, pose.transform.orientation.w);
-                        }
-                    } else {
-                        if (this._xrReticle) this._xrReticle.visible = false;
-                    }
-                }
-                this.renderer.render(this.scene, this.camera);
-            };
-            this.renderer.setAnimationLoop(onXRFrame);
-
-            // Place model on user tap/select
-            session.addEventListener('select', () => {
-                if (this._xrReticle && this._xrReticle.visible) {
-                    this.modelGroup.position.copy(this._xrReticle.position);
-                    this.modelGroup.quaternion.copy(this._xrReticle.quaternion);
-                    this.modelGroup.visible = true;
-                    this.isTracking = true;
-                    if (persistPlacement) {
-                        try {
-                            const p = this.modelGroup.position, q = this.modelGroup.quaternion;
-                            localStorage.setItem(this._xrPlacementKey, JSON.stringify({ pos: [p.x, p.y, p.z], quat: [q.x, q.y, q.z, q.w] }));
-                            this.log('XR placement salvata in localStorage');
-                        } catch (e) { /* ignore */ }
-                    }
-                }
-            });
-
-            session.addEventListener('end', () => { this._endWebXR(); });
-            this.log('WebXR session avviata');
-        } catch (err) {
-            this._xrActive = false;
-            this.log('startWebXR fallita: ' + err.message, 'error');
-            throw err;
-        }
-    }
-
-    _endWebXR() {
-        if (!this._xrActive) return;
-        try {
-            if (this._xrHitTestSource) { this._xrHitTestSource.cancel && this._xrHitTestSource.cancel(); this._xrHitTestSource = null; }
-            if (this._xrReticle) { this.scene.remove(this._xrReticle); this._xrReticle.geometry.dispose(); this._xrReticle.material.dispose(); this._xrReticle = null; }
-            if (this._xrSession) { try { this._xrSession.end(); } catch (e) { /* ignore */ } this._xrSession = null; }
-        } catch (e) { /* ignore cleanup errors */ }
-        this._xrActive = false;
-        this.renderer.setAnimationLoop(null);
-        requestAnimationFrame(() => this._loop());
-        this.log('WebXR session terminata');
-    }
-
-    loadSavedXRPlacement() {
-        try {
-            const raw = localStorage.getItem(this._xrPlacementKey);
-            if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            if (parsed && parsed.pos && parsed.quat) {
-                this.modelGroup.position.set(parsed.pos[0], parsed.pos[1], parsed.pos[2]);
-                this.modelGroup.quaternion.set(parsed.quat[0], parsed.quat[1], parsed.quat[2], parsed.quat[3]);
-                this.modelGroup.visible = true;
-                this.isTracking = true;
-                this.log('XR placement caricata da localStorage');
-                return parsed;
-            }
-        } catch (e) { /* ignore */ }
-        return null;
-    }
-
-    // ── Utility: main-thread detection test ──────────────────────────────────
-
-    async testDetectMainThread() {
-        if (typeof AR === 'undefined' || !AR.Detector) {
-            this.log('js-aruco2 non disponibile', 'error');
-            return null;
-        }
-
-        const w = this.overlay.width, h = this.overlay.height;
-        const tmp = document.createElement('canvas');
-        tmp.width = w; tmp.height = h;
-        const ctx = tmp.getContext('2d');
-        try { ctx.drawImage(this.video, 0, 0, w, h); } catch (e) { this.log('Test draw: ' + e.message, 'warn'); }
-
-        try {
-            const detector = new AR.Detector({ dictionaryName: 'ARUCO' });
-            const detected = detector.detect({ width: w, height: h, data: ctx.getImageData(0, 0, w, h).data });
-            const markers = detected.map(m => ({
-                id: m.id,
-                corners: m.corners.map(c => [c.x, c.y])
-            }));
-
-            this.log(`Test main-thread: ${markers.length} marker trovati`);
-
-            this.overlayCtx.clearRect(0, 0, w, h);
-            for (const m of markers) {
-                this.overlayCtx.strokeStyle = '#00FF00';
-                this.overlayCtx.lineWidth = 4;
-                this.overlayCtx.beginPath();
-                this.overlayCtx.moveTo(m.corners[0][0], m.corners[0][1]);
-                m.corners.forEach(p => this.overlayCtx.lineTo(p[0], p[1]));
-                this.overlayCtx.closePath();
-                this.overlayCtx.stroke();
-                this.overlayCtx.fillStyle = '#00FF00';
-                this.overlayCtx.fillText(`ID: ${m.id}`, m.corners[0][0], m.corners[0][1] - 10);
-            }
-            return markers;
-        } catch (err) {
-            this.log('Test fallito: ' + err.message, 'error');
-            return null;
-        }
-    }
-
     // ── Screenshot ───────────────────────────────────────────────────────────
 
     async captureScreenshot() {
@@ -2535,21 +1848,5 @@ export class RestorationEngine {
         try { ctx.drawImage(this.renderer.domElement, 0, 0, w, h); } catch (e) { this.log('Screenshot 3d: ' + e.message, 'warn'); }
         try { ctx.drawImage(this.overlay, 0, 0, w, h); } catch (e) { this.log('Screenshot overlay: ' + e.message, 'warn'); }
         return canvas.toDataURL('image/png');
-    }
-
-    // ── Download markers ─────────────────────────────────────────────────────
-
-    async downloadMarkers() {
-        for (const id of [1, 2, 3, 4, 5, 6, 7, 8]) {
-            try {
-                const a = document.createElement('a');
-                a.href = `ArUco markers/aruco-marker-ID-${id}.svg`;
-                a.download = `aruco-marker-ID-${id}.svg`;
-                a.click();
-            } catch (e) {
-                this.log(`Download marker ${id} fallito: ${e.message}`, 'error');
-            }
-        }
-        this.log('Download markers completato.');
     }
 }

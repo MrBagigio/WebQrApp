@@ -11,7 +11,7 @@ let markerLength = 0.1;  // meters (default 100mm)
 let focalLength = 800;   // pixels (updated per frame)
 let canvas = null;       // reusable OffscreenCanvas
 let ctx = null;
-const validMarkerIds = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+const validMarkerIds = new Set([1]);
 
 // Corner smoothing state (worker-side temporal filter to stabilise POSIT inputs)
 // NOTE: Keep these values LOW — main-thread filters handle smoothing.

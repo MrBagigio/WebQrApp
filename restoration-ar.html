@@ -541,61 +541,30 @@
                     if (startStatus) startStatus.textContent = msg;
                 };
 
-                // check for single-marker mode via query string
-                const params = new URLSearchParams(window.location.search);
-                let singleModeConfig = null;
-                if (params.has('single')) {
-                    // single-marker mode: optional explicit ID, otherwise accept first detectable ID
-                    const markerIdParam = Number.parseInt(params.get('id') || '', 10);
-                    if (Number.isFinite(markerIdParam)) engine._validMarkerIds = new Set([markerIdParam]);
-                    else engine._validMarkerIds = new Set(); // empty => accept any ID
-                    engine._singleMarkerMode = true;
-                    engine.markerSizeMM = 150; // 15cm printed marker
-                    engine._trackingTimeout = 120; // avoid stale-pose lag when marker is lost
-                    engine._dictionaryName = (params.get('dict') || 'AUTO');
-                    // Improve detection for single large marker
-                    engine._detectionFps = 30; 
-                    engine._minMarkerPerimeter = 20; // Reduced to minimize distance requirement
-                    engine._maxDetectSize = 1024; // Increase resolution for better feature extraction
-                    engine._debugOverlayEnabled = true; 
-                    engine.showMarkerHelpers(true);
+                // Single-marker mode for ID 1
+                engine._validMarkerIds = new Set([1]);
+                engine._singleMarkerMode = true;
+                engine.markerSizeMM = 150; // 15cm printed marker
+                engine._trackingTimeout = 120;
+                engine._dictionaryName = 'AUTO';
+                engine._detectionFps = 30; 
+                engine._minMarkerPerimeter = 20;
+                engine._maxDetectSize = 1024;
+                engine._debugOverlayEnabled = true; 
+                engine.showMarkerHelpers(true);
 
-                    
-                    const ox = Number.parseFloat(params.get('ox') || '0') || 0;
-                    const oy = Number.parseFloat(params.get('oy') || '0') || 0;
-                    const defaultSingleOz = 0.135; // requested: 13.5cm from marker center on Z
-                    const oz = params.has('oz')
-                        ? (Number.parseFloat(params.get('oz')) || 0)
-                        : defaultSingleOz;
-                    singleModeConfig = { ox, oy, oz, markerId: Number.isFinite(markerIdParam) ? markerIdParam : null };
-                    if (Number.isFinite(markerIdParam)) window.log(`Single-marker mode: tracking ID ${markerIdParam}`, 'info');
-                    else window.log('Single-marker mode: tracking first detectable marker ID', 'info');
-                }
+                const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
+                engine.setMarkerOffsets({
+                    1: {
+                        pos: [0, 0, 0],
+                        quat: [rot.x, rot.y, rot.z, rot.w]
+                    }
+                }, { persist: false });
+                if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
 
                 await engine.init();
 
-                // Apply single-marker placement offsets after init so they override saved multi-marker layouts.
-                if (singleModeConfig) {
-                    const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-                    if (singleModeConfig.markerId != null) {
-                        engine.setMarkerOffsets({
-                            [singleModeConfig.markerId]: {
-                                pos: [singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz],
-                                quat: [rot.x, rot.y, rot.z, rot.w]
-                            }
-                        }, { persist: false });
-                        if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([singleModeConfig.markerId]);
-                    } else {
-                        engine._singleMarkerOffsetTemplate = {
-                            positionOffset: new THREE.Vector3(singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz),
-                            rotationOffset: rot.clone()
-                        };
-                        if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds(null);
-                    }
-                    window.log(`Single-marker offset active: x=${singleModeConfig.ox.toFixed(3)} y=${singleModeConfig.oy.toFixed(3)} z=${singleModeConfig.oz.toFixed(3)}`, 'info');
-                }
-
-                window.log('Engine pronto!');
+                window.log('Engine pronto per ArUco ID 1!');
                 
                 // --- Init UI Components ---
                 new SettingsPanel(engine);
@@ -619,152 +588,6 @@
                     pctLabel.textContent = e.target.value + '%';
                     engine.setRestorationLevel(e.target.value / 100);
                 });
-
-                // --- WebXR / AR handoff button ---
-                // Goal: after marker lock is stable, user can switch to world-tracking AR.
-                // Note: true ARKit world tracking is available only when browser/runtime exposes WebXR immersive-ar.
-                const enterARBtn = document.getElementById('enter-ar-btn');
-                const noLockMode = !!engine._singleMarkerMode;
-                if (noLockMode && enterARBtn) {
-                    enterARBtn.style.display = 'none';
-                    window.log('No-lock mode attivo: controlli LOCK/AR nascosti.', 'info');
-                }
-                if (!noLockMode && enterARBtn && engine && engine.supportsWebXR) {
-                    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-                    let webxrSupported = false;
-                    let markerLockFallback = false;
-                    let autoWorldArAttempted = false;
-                    let autoWorldArFailedNeedTap = false;
-
-                    const updateArButtonLabel = () => {
-                        if (!webxrSupported) {
-                            if (!markerLockFallback) return;
-                            const locked = typeof engine.isWorldAnchorActive === 'function' && engine.isWorldAnchorActive();
-                            enterARBtn.textContent = locked ? 'UNLOCK MARKER' : 'LOCK MARKER';
-                            return;
-                        }
-                        if (engine._xrActive) {
-                            enterARBtn.textContent = 'ESCI AR';
-                            return;
-                        }
-                        const locked = typeof engine.isWorldAnchorActive === 'function' && engine.isWorldAnchorActive();
-                        enterARBtn.textContent = locked ? 'LOCK AR' : 'ENTRA AR';
-                    };
-
-                    const tryStartWorldAR = async ({ source = 'manual' } = {}) => {
-                        if (!webxrSupported || engine._xrActive) return;
-                        try {
-                            await engine.startWebXR({ persistPlacement: true });
-                            autoWorldArFailedNeedTap = false;
-                            updateArButtonLabel();
-                            if (source === 'auto') {
-                                window.log('World AR avviata automaticamente.', 'info');
-                            }
-                        } catch (err) {
-                            // Typical case on mobile Safari/other browsers: user gesture required.
-                            autoWorldArFailedNeedTap = true;
-                            updateArButtonLabel();
-                            if (source === 'auto') {
-                                window.log('Auto-avvio AR non consentito dal browser. Tocca LOCK AR.', 'warn');
-                            } else {
-                                window.log('WebXR avvio fallito: ' + err.message, 'error');
-                            }
-                        }
-                    };
-
-                    engine.supportsWebXR().then(supported => {
-                        webxrSupported = !!supported;
-                        enterARBtn.style.display = 'inline-block';
-
-                        if (webxrSupported) {
-                            updateArButtonLabel();
-                        } else if (isIOS) {
-                            markerLockFallback = true;
-                            updateArButtonLabel();
-                            window.log('Questo browser iOS non espone WebXR immersive-ar: ARKit world-lock richiede app nativa o runtime compatibile.', 'warn');
-                            window.log('Fallback attivo: usa LOCK MARKER per bloccare stabilmente la casetta con tracking marker.', 'info');
-                        } else {
-                            markerLockFallback = true;
-                            updateArButtonLabel();
-                            window.log('WebXR non supportata: fallback LOCK MARKER abilitato.', 'warn');
-                        }
-                    }).catch(() => {
-                        enterARBtn.style.display = 'inline-block';
-                        markerLockFallback = true;
-                        updateArButtonLabel();
-                    });
-
-                    enterARBtn.addEventListener('click', async () => {
-                        if (!webxrSupported) {
-                            if (markerLockFallback) {
-                                const locked = typeof engine.isWorldAnchorActive === 'function' && engine.isWorldAnchorActive();
-                                if (!locked) {
-                                    if (typeof engine.forceWorldAnchorLock === 'function') {
-                                        const ok = engine.forceWorldAnchorLock();
-                                        if (ok) {
-                                            window.log('Marker lock attivato: casetta stabilizzata (no world-tracking ARKit).', 'info');
-                                        } else {
-                                            window.log('LOCK MARKER non attivato: inquadra almeno 2 marker stabili e riprova.', 'warn');
-                                        }
-                                    }
-                                } else {
-                                    if (typeof engine.releaseWorldAnchor === 'function') {
-                                        engine.releaseWorldAnchor();
-                                        window.log('Marker lock disattivato.', 'info');
-                                    }
-                                }
-                                updateArButtonLabel();
-                                return;
-                            }
-                            if (isIOS) {
-                                window.log('Per lock in stile Amazon (world tracking persistente) su iPhone serve runtime ARKit/WebXR supportato.', 'warn');
-                            }
-                            return;
-                        }
-
-                        if (!engine._xrActive) {
-                            const locked = typeof engine.isWorldAnchorActive === 'function' && engine.isWorldAnchorActive();
-                            if (locked) {
-                                window.log('Lock marker stabile: avvio world-tracking. In AR tocca una superficie per fissare la casetta.', 'info');
-                            } else {
-                                window.log('Avvio AR: appena lock marker è stabile, puoi fissare la casetta toccando una superficie.', 'info');
-                            }
-                            await tryStartWorldAR({ source: 'manual' });
-                        } else {
-                            engine._endWebXR();
-                            updateArButtonLabel();
-                        }
-                    });
-
-                    // Keep label aligned with marker-lock state while in non-XR mode
-                    const buttonTicker = setInterval(() => {
-                        if (engine._stopped) {
-                            clearInterval(buttonTicker);
-                            return;
-                        }
-                        updateArButtonLabel();
-
-                        // Automatic handoff: once marker-lock is stable, try World AR automatically once.
-                        // If browser rejects without user gesture, keep only one manual step: LOCK AR button.
-                        if (!webxrSupported || engine._xrActive || autoWorldArAttempted) return;
-                        const locked = typeof engine.isWorldAnchorActive === 'function' && engine.isWorldAnchorActive();
-                        if (locked) {
-                            autoWorldArAttempted = true;
-                            window.log('Lock marker raggiunto: tentativo handoff automatico a World AR...', 'info');
-                            tryStartWorldAR({ source: 'auto' });
-                        }
-
-                        if (autoWorldArFailedNeedTap && locked && !engine._xrActive) {
-                            enterARBtn.textContent = 'LOCK AR';
-                        }
-                    }, 500);
-
-                    // If a saved placement exists, load it (non-intrusive)
-                    try {
-                        const saved = engine.loadSavedXRPlacement && engine.loadSavedXRPlacement();
-                        if (saved) window.log('Posizione XR salvata trovata (usa ENTRA AR per visualizzarla)', 'info');
-                    } catch (e) { /* ignore */ }
-                }
 
                 // Calibrate focal
                 document.getElementById('calib-btn').addEventListener('click', () => {

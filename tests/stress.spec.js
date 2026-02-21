@@ -4,7 +4,7 @@ const URL = 'http://localhost:8001';
 test.describe('Stress tests - POC runtime stress', () => {
   test('Run stress injection for 10s and collect stats', async ({ page }) => {
     await page.goto(URL + '/aruco-poc.html');
-    await page.waitForSelector('h2');
+    await page.waitForSelector('#detection-rate', { timeout: 10000 });
 
     // ensure model and toggles exist
     await page.evaluate(() => {

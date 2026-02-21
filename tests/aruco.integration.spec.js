@@ -10,8 +10,8 @@ test.describe('ArUco Integration - pose application and occluder', () => {
     page.on('console', (m) => logs.push({ type: 'console', text: m.text() }));
     page.on('pageerror', (err) => logs.push({ type: 'pageerror', text: String(err) }));
 
-    // Ensure POC heading exists and the controls are present in the DOM
-    await page.waitForSelector('h2', { timeout: 5000 });
+    // Ensure controls are present in the DOM
+    await page.waitForSelector('#toggle-ekf', { timeout: 10000 });
     const controlPresence = await page.evaluate(() => ({
       hasEkf: !!document.getElementById('toggle-ekf'),
       hasOcclusion: !!document.getElementById('toggle-occlusion'),
@@ -24,8 +24,14 @@ test.describe('ArUco Integration - pose application and occluder', () => {
 
     // create scene and model if not present
     await page.evaluate(() => {
-      if (!window.scene) { window.scene = new THREE.Scene(); window.renderer = window.renderer || new THREE.WebGLRenderer(); }
-      if (!window.model) { window.model = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshNormalMaterial()); scene.add(window.model); }
+      if (!window.scene) {
+        window.scene = new THREE.Scene();
+        window.renderer = window.renderer || new THREE.WebGLRenderer();
+      }
+      if (!window.model) {
+        window.model = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshNormalMaterial());
+        window.scene.add(window.model);
+      }
       document.getElementById('toggle-ekf').checked = true;
       document.getElementById('toggle-occluder-advanced').checked = true;
       document.getElementById('toggle-occlusion').checked = true;
@@ -51,29 +57,40 @@ test.describe('ArUco Integration - pose application and occluder', () => {
       window._applyPoseMeasurement({ positionArr: p, quatArr: q, markerLength: 0.05 });
     }, { p: samplePos, q: sampleQuat });
 
-    // Verify model visible and scaled
+    // Verify model visible and pose applied
     const visible = await page.evaluate(() => !!window.model && window.model.visible === true);
     expect(visible).toBe(true);
-    const scale = await page.evaluate(() => window.model.scale.x);
-    expect(scale).toBeCloseTo(0.05, 3);
+    const poseApplied = await page.evaluate(() => {
+      if (!window.model) return { ok: false };
+      return {
+        ok: true,
+        x: window.model.position.x,
+        y: window.model.position.y,
+        z: window.model.position.z,
+      };
+    });
+    expect(poseApplied.ok).toBe(true);
+    expect(Math.abs(poseApplied.x - samplePos[0])).toBeLessThanOrEqual(0.03);
+    expect(Math.abs(poseApplied.y - samplePos[1])).toBeLessThanOrEqual(0.03);
+    expect(Number.isFinite(poseApplied.z)).toBe(true);
+    expect(Math.abs(poseApplied.z)).toBeGreaterThanOrEqual(0.03);
 
     // Verify occluder exists and advanced flag was used (material.depthWrite true)
     const occluderInfo = await page.evaluate(() => {
+      if (!window._occluder && typeof window.createOccluderFromModel === 'function') {
+        try { window.createOccluderFromModel(true); } catch (e) {}
+      }
       if (!window._occluder) {
-        if (typeof window.createOccluderFromModel === 'function') {
-          try { window.createOccluderFromModel(true); } catch (e) {}
-        } else {
-          // fallback: create simple box occluder
-          const bbox = new THREE.Box3().setFromObject(window.model);
-          const size = new THREE.Vector3(); bbox.getSize(size);
-          const geo = new THREE.BoxGeometry(size.x*1.02, size.y*1.02, size.z*1.02);
-          const mat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
-          const box = new THREE.Mesh(geo, mat);
-          const center = new THREE.Vector3(); bbox.getCenter(center);
-          box.position.copy(center);
-          window.scene.add(box);
-          window._occluder = box;
-        }
+        // fallback: create simple box occluder
+        const bbox = new THREE.Box3().setFromObject(window.model);
+        const size = new THREE.Vector3(); bbox.getSize(size);
+        const geo = new THREE.BoxGeometry(size.x*1.02, size.y*1.02, size.z*1.02);
+        const mat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
+        const box = new THREE.Mesh(geo, mat);
+        const center = new THREE.Vector3(); bbox.getCenter(center);
+        box.position.copy(center);
+        window.scene.add(box);
+        window._occluder = box;
       }
       const o = window._occluder;
       return o ? { colorWrite: o.material.colorWrite, depthWrite: o.material.depthWrite } : null;

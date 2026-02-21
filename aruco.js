@@ -291,7 +291,37 @@ async function initPOC() {
     requestAnimationFrame(mainLoop);
   } catch (e) {
     console.error('Camera error', e);
-    alert('Impossibile accedere alla fotocamera. Controlla i permessi.');
+    
+    // Fallback for local testing without HTTPS/Camera permissions
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      console.warn('Running on localhost without camera access. Using mock video stream.');
+      // Create a mock video stream (e.g., a black canvas)
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#333';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = '20px Arial';
+      ctx.fillText('Mock Camera Stream', 50, 50);
+      
+      const stream = canvas.captureStream(30); // 30 fps
+      video.srcObject = stream;
+      await video.play();
+      streaming = true;
+      videoWidth = canvas.width;
+      videoHeight = canvas.height;
+
+      setupCanvas();
+      await initOpenCVStuff();
+      initThree();
+      setupWorkerToggle();
+      _lastRenderTime = performance.now();
+      requestAnimationFrame(mainLoop);
+    } else {
+      alert('Impossibile accedere alla fotocamera. Controlla i permessi o assicurati di usare HTTPS.');
+    }
   }
 }
 
@@ -1019,7 +1049,8 @@ function initWorker() {
 // TEST HELPERS (compatible with existing test suite)
 // ═══════════════════════════════════════════════════════════════
 function _applyPoseMeasurement({ positionArr, quatArr, markerLength = null }) {
-  if (!positionArr || !quatArr || !model) return false;
+  const targetModel = window.model || model;
+  if (!positionArr || !quatArr || !targetModel) return false;
 
   const position = new THREE.Vector3(positionArr[0], positionArr[1], positionArr[2]);
   const measuredQuat = new THREE.Quaternion(quatArr[0], quatArr[1], quatArr[2], quatArr[3]);
@@ -1051,35 +1082,35 @@ function _applyPoseMeasurement({ positionArr, quatArr, markerLength = null }) {
     }
     quatEKF.predict(omega, dt);
     quatEKF.update(measuredQuat);
-    model.quaternion.copy(quatEKF.q);
+    targetModel.quaternion.copy(quatEKF.q);
     window._lastMeasQuat = measuredQuat.clone();
 
     if (useKalman) {
       ensureKalman();
       const f = kalman.update([position.x, position.y, position.z]);
-      model.position.set(f.x, f.y, f.z);
+      targetModel.position.set(f.x, f.y, f.z);
     } else {
       const p = posFilter.update(position, dt, 1.0);
-      model.position.copy(p);
+      targetModel.position.copy(p);
     }
   } else if (useKalman) {
     ensureKalman();
     const f = kalman.update([position.x, position.y, position.z]);
-    model.position.set(f.x, f.y, f.z);
+    targetModel.position.set(f.x, f.y, f.z);
     quatFilter.update(measuredQuat, dt, 1.0);
-    model.quaternion.copy(quatFilter.current);
+    targetModel.quaternion.copy(quatFilter.current);
   } else {
     const p = posFilter.update(position, dt, 1.0);
     const q = quatFilter.update(measuredQuat, dt, 1.0);
-    model.position.copy(p);
-    model.quaternion.copy(q);
+    targetModel.position.copy(p);
+    targetModel.quaternion.copy(q);
   }
 
   if (typeof markerLength === 'number') {
-    const s = computeModelScale(model, markerLength, userScaleFactor);
-    model.scale.set(s, s, s);
+    const s = computeModelScale(targetModel, markerLength, userScaleFactor);
+    targetModel.scale.set(s, s, s);
   }
-  model.visible = true;
+  targetModel.visible = true;
   _markerVisible = true;
   return true;
 }

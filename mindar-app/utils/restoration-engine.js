@@ -98,12 +98,8 @@ export class RestorationEngine {
         this._fusionAgreeDist = 0.14;     // meters - tighter marker agreement for stable fusion
         this._fusionTrackWindow = 0.24;   // meters - temporal gate around previous fused pose
         this._fusionPosSigma = 0.14;      // meters - distance weighting sigma for multi-marker blend
-        this._singleMarkerMaxJump = 0.10; // meters - stricter guard when only one marker is usable
+        this._singleMarkerMaxJump = 0.25; // meters - stricter guard when only one marker is usable (increased from 0.10 for better fast-motion tracking)
         this._maxPoseErrorForFusion = 0.35;
-        this._modelYawCorrection = Math.PI; // fix virtual house yaw inversion vs physical setup
-        this._modelYawCorrectionQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this._modelYawCorrection);
-        this._modelPitchCorrection = Math.PI; // flip upside-down model (roof down -> roof up)
-        this._modelPitchCorrectionQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this._modelPitchCorrection);
         this._trackingPosDeadband = 0.0035;  // meters, suppress micro-jitter when nearly static
         this._trackingRotDeadband = 0.020;   // radians, suppress tiny orientation shimmer
         this._anchorIds = null;           // null = use all markers; array -> prefer these ids
@@ -220,9 +216,25 @@ export class RestorationEngine {
                 });
             } catch (err) {
                 if (err.name === 'NotAllowedError') {
-                    throw new Error('Permesso negato. Controlla impostazioni browser.');
+                    throw new Error('Permesso negato. Controlla impostazioni browser o usa HTTPS.');
                 }
-                throw new Error('Camera indisponibile. Chiudi altre app.');
+                
+                // Fallback for local testing without HTTPS/Camera permissions
+                if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+                    this.log('Running on localhost without camera access. Using mock video stream.', 'warn');
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 640;
+                    canvas.height = 480;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '20px Arial';
+                    ctx.fillText('Mock Camera Stream', 50, 50);
+                    stream = canvas.captureStream(30);
+                } else {
+                    throw new Error('Camera indisponibile. Chiudi altre app o usa HTTPS.');
+                }
             }
 
             this.video.srcObject = stream;
@@ -1149,6 +1161,12 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
+            // Apply global model correction (yaw + pitch) to match physical orientation.
+            // Pitch: flip upside-down model (roof down -> roof up)
+            // Yaw: fix virtual house yaw inversion vs physical setup
+            object.rotation.set(Math.PI, Math.PI, 0, 'YXZ');
+            object.updateMatrixWorld(true);
+
             this._scaleModel(object, targetSize);
             object.traverse(child => {
                 if (child.isMesh) {
@@ -1656,22 +1674,14 @@ export class RestorationEngine {
         const avgViewAngle = pool.reduce((s, c) => s + (c.cameraAngleDeg || 0), 0) / Math.max(1, pool.length);
         this._viewAngleEMA = (this._viewAngleEMA * 0.85) + (avgViewAngle * 0.15);
 
-        // Guard: reject wild single-marker jumps
-        if (this._hasFirstPose && pool.length < 2) {
+        // Guard: reject wild single-marker jumps (unless in single marker mode where we must trust it)
+        if (this._hasFirstPose && pool.length < 2 && !this._singleMarkerMode) {
             const jump = this.modelGroup.position.distanceTo(fusedPos);
             if (jump > this._singleMarkerMaxJump) {
                 statusEl.textContent = 'RICERCA...';
                 statusEl.style.color = 'var(--p-dim)';
                 return;
             }
-        }
-
-        // Apply global model correction (yaw + pitch) to match physical orientation.
-        if (this._modelYawCorrectionQuat || this._modelPitchCorrectionQuat) {
-            const correctedQuat = fusedQuat.clone();
-            if (this._modelYawCorrectionQuat) correctedQuat.multiply(this._modelYawCorrectionQuat);
-            if (this._modelPitchCorrectionQuat) correctedQuat.multiply(this._modelPitchCorrectionQuat);
-            fusedQuat = correctedQuat;
         }
 
         // ── Step 4: Update marker helpers ──
