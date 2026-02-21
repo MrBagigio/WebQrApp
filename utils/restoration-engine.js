@@ -1473,12 +1473,14 @@ export class RestorationEngine {
         const m = poseful[0];
         const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
 
-        // Minimal single-marker mode: house sits at marker center and follows marker pose directly.
+        // always apply 180° yaw to align house facing correctly
+        const yawFix = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI);
+        const finalQuat = quaternion.clone().multiply(yawFix);
+
         this.modelGroup.position.copy(position);
-        this.modelGroup.quaternion.copy(quaternion);
-        
+        this.modelGroup.quaternion.copy(finalQuat);
         this._poseTargetPosition = position.clone();
-        this._poseTargetQuaternion = quaternion.clone();
+        this._poseTargetQuaternion = finalQuat.clone();
 
         this.isTracking = true;
         this.modelGroup.visible = true;

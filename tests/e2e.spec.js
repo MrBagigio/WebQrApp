@@ -10,12 +10,12 @@ test.describe('WebQrApp - smoke suite', () => {
         await expect(page.locator('#hint')).toHaveCount(1);
     });
 
-    test('Restoration AR page boots and shows start controls', async ({ page }) => {
+    test('Restoration AR page boots and shows minimal slider', async ({ page }) => {
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e)));
         await page.goto(URL + '/restoration-ar.html?single=1&dict=AUTO');
-        await expect(page.locator('#start-ar-btn')).toBeVisible();
-        await expect(page.locator('#tracking-status')).toHaveCount(1);
+        await expect(page.locator('#restoration-range')).toBeVisible();
+        // no errors thrown during startup
         expect(errors).toEqual([]);
     });
 

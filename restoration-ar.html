@@ -402,14 +402,6 @@
 </head>
 
 <body>
-    <!-- Start overlay -->
-    <div id="start-overlay">
-        <h1>EXPEAR RESTAURO</h1>
-        <p>Tocca per avviare la fotocamera e iniziare il restauro.<br>
-        (per usare un solo marker aggiungi <code>?single=1</code> all'URL)</p>
-        <button class="start-btn" id="start-ar-btn">AVVIA FOTOCAMERA</button>
-        <p id="start-status"></p>
-    </div>
 
     <!-- Video / Canvas / 3D layers -->
     <div id="video-container">
@@ -418,46 +410,9 @@
         <div id="three-container"></div>
     </div>
 
-    <!-- Tracking badge -->
-    <div class="status-badge" id="tracking-status">IN ATTESA DI TARGET...</div>
+    <!-- simple restoration slider -->
+    <input type="range" id="restoration-range" min="0" max="100" value="0" style="position:fixed;bottom:4px;left:50%;transform:translateX(-50%);width:80%;pointer-events:auto;z-index:2001;">
 
-    <!-- Top-right toolbar -->
-    <div class="ar-toolbar">
-        <button id="enter-ar-btn" style="display:none">ENTRA AR</button>
-    </div>
-
-    <!-- Bottom restoration tray -->
-    <div id="restoration-ui">
-        <div class="restoration-tray">
-            <!-- Restoration slider (always visible) -->
-            <div class="slider-header">
-                <span class="slider-label">Livello Restauro</span>
-                <span class="percentage" id="percent-label">0%</span>
-            </div>
-            <input type="range" min="0" max="100" value="0" class="restoration-slider" id="restoration-range">
-            <div class="scale-labels"><span>STATO ATTUALE</span><span>RESTAURATA</span></div>
-
-            <!-- House scale control -->
-            <div class="slider-header" style="margin-top:12px;">
-                <span class="slider-label">Scala Casa</span>
-                <span class="percentage" id="size-label">1.0×</span>
-            </div>
-            <input type="range" min="0.5" max="10" value="1" step="0.1" class="restoration-slider" id="size-slider">
-
-            <!-- Progress bar -->
-            <div id="fbx-progress-container">
-                <progress id="fbx-progress" max="100" value="0"></progress>
-                <div id="fbx-progress-label">Caricamento modello...</div>
-            </div>
-
-            <!-- Actions (always visible) -->
-            <div class="tray-actions">
-                <button id="calib-btn">CALIBRA</button>
-                <button id="capture-btn" class="btn-accent">CATTURA</button>
-                <button id="reset-cam">RESET</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
@@ -465,24 +420,7 @@
     <script src="vendor/fflate.min.js"
         onerror="window.log && window.log('Errore fflate locale (vendor/fflate.min.js)','error')"></script>
     <script>
-        // size-slider hook (outside of fflate IIFE)
-        document.addEventListener('DOMContentLoaded', () => {
-            const slider = document.getElementById('size-slider');
-            const label = document.getElementById('size-label');
-            if (slider && label) {
-                window.houseScaleMultiplier = parseFloat(slider.value);
-                slider.oninput = () => {
-                    const v = parseFloat(slider.value);
-                    window.houseScaleMultiplier = v;
-                    label.textContent = v.toFixed(1) + '×';
-                    if (window.engine) {
-                        const factor = (window.engine.houseSizeMM/1000) * v;
-                        if (window.engine.restoredModel) window.engine._scaleModel(window.engine.restoredModel, factor);
-                        if (window.engine.destroyedModel) window.engine._scaleModel(window.engine.destroyedModel, factor);
-                    }
-                };
-            }
-        });
+
     </script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"
         onerror="window.log && window.log('Errore FBXLoader','error')"></script>
@@ -522,138 +460,43 @@
     <script type="module">
         import { RestorationEngine } from './utils/restoration-engine.js';
 
-        const overlay = document.getElementById('start-overlay');
-        const startBtn = document.getElementById('start-ar-btn');
-        const startStatus = document.getElementById('start-status');
-
-        const go = async () => {
-            if (startBtn.disabled) return;
-            startBtn.disabled = true;
-            startStatus.textContent = 'Caricamento Engine...';
-            window.log('Avvio richiesto...');
+        async function main() {
+            const engine = new RestorationEngine();
+            engine._validMarkerIds = new Set([1]);
+            engine._singleMarkerMode = true;
+            engine.markerSizeMM = 150;
+            engine._dictionaryName = 'ARUCO';
+            engine._detectionFps = 24;
+            engine._minMarkerPerimeter = 40;
+            engine._maxDetectSize = 768;
+            engine._debugOverlayEnabled = false;
+            engine.showMarkerHelpers(false);
 
             try {
-                const engine = new RestorationEngine();
-                window.engine = engine; // debug access
-                engine.onLog = (msg, type) => {
-                    window.log(msg, type);
-                    if (startStatus) startStatus.textContent = msg;
-                };
+                localStorage.removeItem('expear.markerOffsets.v4');
+                localStorage.removeItem('expear.anchorIds');
+                localStorage.removeItem('expear.anchorLock.v2');
+            } catch (_e) {}
 
-                // Single-marker mode for ID 1
-                engine._validMarkerIds = new Set([1]);
-                engine._singleMarkerMode = true;
-                engine.markerSizeMM = 150; // 15cm printed marker
-                engine._dictionaryName = 'ARUCO';
-                engine._detectionFps = 24;
-                engine._minMarkerPerimeter = 40;
-                engine._maxDetectSize = 768;
-                engine._debugOverlayEnabled = false;
-                engine.showMarkerHelpers(false);
+            engine.setMarkerOffsets({1:{pos:[0,0,0],quat:[0,0,0,1]}},{persist:true});
+            if (typeof engine.setUseAprilTag==='function') engine.setUseAprilTag(false);
+            if (typeof engine.setCornerFlowEnabled==='function') engine.setCornerFlowEnabled(false);
+            if (typeof engine.setCornerSmoothing==='function') engine.setCornerSmoothing(0);
+            if (typeof engine.setAnchorIds==='function') engine.setAnchorIds([1]);
 
-                // Clean old persisted state to avoid carrying broken offsets/locks from previous builds
-                try {
-                    localStorage.removeItem('expear.markerOffsets.v4');
-                    localStorage.removeItem('expear.anchorIds');
-                    localStorage.removeItem('expear.anchorLock.v2');
-                } catch (_e) {}
+            await engine.init();
+            console.log('engine ready');
 
-                // Hard-set neutral offset for marker 1 and persist it
-                engine.setMarkerOffsets({
-                    1: {
-                        pos: [0, 0, 0],
-                        quat: [0, 0, 0, 1]
-                    }
-                }, { persist: true });
-
-                if (typeof engine.setUseAprilTag === 'function') engine.setUseAprilTag(false);
-                if (typeof engine.setCornerFlowEnabled === 'function') engine.setCornerFlowEnabled(false);
-                if (typeof engine.setCornerSmoothing === 'function') engine.setCornerSmoothing(0);
-                if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
-
-                await engine.init();
-
-                window.log('Engine pronto per ArUco ID 1!');
-
-                // Fade out start overlay
-                if (typeof gsap !== 'undefined') {
-                    gsap.to(overlay, {
-                        opacity: 0, duration: 0.8,
-                        onComplete: () => overlay.style.display = 'none'
-                    });
-                } else {
-                    overlay.style.display = 'none';
-                }
-
-                // ── Wire UI controls ──
-
-                // Restoration slider
-                const slider = document.getElementById('restoration-range');
-                const pctLabel = document.getElementById('percent-label');
-                slider.addEventListener('input', (e) => {
-                    pctLabel.textContent = e.target.value + '%';
-                    engine.setRestorationLevel(e.target.value / 100);
+            // wire restoration slider
+            const restSlider = document.getElementById('restoration-range');
+            if (restSlider) {
+                restSlider.addEventListener('input', e => {
+                    engine.setRestorationLevel(e.target.value/100);
                 });
-
-                // Calibrate focal
-                document.getElementById('calib-btn').addEventListener('click', () => {
-                    engine.updateFocalFromCamera();
-                    window.log('Focale aggiornata: ' + Math.round(engine.focal) + ' px');
-                });
-
-                // Capture screenshot
-                document.getElementById('capture-btn').addEventListener('click', async () => {
-                    try {
-                        const url = await engine.captureScreenshot();
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'restauro_' + Date.now() + '.png';
-                        a.click();
-                        window.log('Screenshot salvato');
-                    } catch (err) {
-                        window.log('Screenshot fallito: ' + err.message, 'error');
-                    }
-                });
-
-                // Reset
-                document.getElementById('reset-cam').addEventListener('click', () => {
-                    engine.stop();
-                    window.location.reload();
-                });
-
-                window.addEventListener('beforeunload', () => engine.stop());
-            } catch (err) {
-                startStatus.style.color = '#f44';
-                startStatus.textContent = 'ERRORE: ' + err.message;
-                startBtn.disabled = false;
-                window.log('Start fail: ' + err.message, 'error');
             }
-        };
-
-        startBtn.addEventListener('click', go);
-
-        // Auto-start if camera permission already granted
-        async function checkCameraPermission() {
-            if (!navigator.permissions) return;
-            try {
-                const p = await navigator.permissions.query({ name: 'camera' });
-                const update = () => {
-                    if (p.state === 'granted') {
-                        startStatus.textContent = 'Permesso concesso — avvio...';
-                        go();
-                    } else if (p.state === 'prompt') {
-                        startStatus.textContent = 'Tocca AVVIA FOTOCAMERA per consentire l\'accesso.';
-                    } else if (p.state === 'denied') {
-                        startStatus.style.color = '#f44';
-                        startStatus.textContent = 'Permesso bloccato — riattivalo nelle impostazioni.';
-                    }
-                };
-                update();
-                p.onchange = update;
-            } catch (error_) { window.log('Permissions API: ' + error_.message, 'warn'); }
         }
-        checkCameraPermission();
-        window.log('Sistema pronto.');
+
+        main();
     </script>
 </body>
 
