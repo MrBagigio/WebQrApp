@@ -53,13 +53,15 @@ self.onmessage = (e) => {
         switch (msg.type) {
             case 'init':
                 // allow caller to specify dictionary (e.g. ARUCO, ARUCO_5X5_1000, ARUCO_4X4_1000, ARUCO_MIP_36h12, etc.)
-                const dictName = (msg.dictionaryName || 'ARUCO').toUpperCase();
+                const dictNameRaw = msg.dictionaryName || 'ARUCO';
+                const dictName = String(dictNameRaw);
+                const dictMode = dictName.toUpperCase();
                 detector = null;
                 detectors = null;
                 detectorNames = [];
                 detectorIndex = 0;
 
-                if (dictName === 'AUTO') {
+                if (dictMode === 'AUTO') {
                     const candidates = ['ARUCO', 'ARUCO_4X4_50', 'ARUCO_5X5_1000', 'ARUCO_MIP_36H12'];
                     const built = [];
                     const names = [];
@@ -197,7 +199,7 @@ function processFrame(msg) {
         try {
             if (typeof aprilImpl.detect === 'function') {
                 const res = aprilImpl.detect(gray, w, h);
-                if (Array.isArray(res) && res.length) aprDetected = res.map(t => ({ id: Number(t.id), corners: (t.corners || t.corners2d || []).map(c => ({ x: c.x || c[0], y: c.y || c[1] })) }));
+                if (Array.isArray(res) && res.length) aprDetected = res.map(t => ({ id: Number(t.id), corners: (t.corners || t.corners2d || []).map(c => ({ x: (c.x ?? c[0]), y: (c.y ?? c[1]) })) }));
             } else if (typeof aprilImpl.detectTags === 'function') {
                 const res = aprilImpl.detectTags(gray, w, h);
                 if (Array.isArray(res) && res.length) aprDetected = res.map(t => ({ id: Number(t.id), corners: t.corners.map(c => ({ x: c.x, y: c.y })) }));
@@ -237,7 +239,7 @@ function processFrame(msg) {
         for (const t of arr) {
             const id = Number(t.id);
             if (!Number.isFinite(id)) continue; // Removed validMarkerIds check to allow debug of other markers
-            const corners = (t.corners || []).map(c => ({ x: c.x || c[0], y: c.y || c[1] }));
+            const corners = (t.corners || []).map(c => ({ x: (c.x ?? c[0]), y: (c.y ?? c[1]) }));
             if (!corners || corners.length < 4) continue;
             if (src === 'apriltag') {
                 if (!merged.has(id)) merged.set(id, { id, corners, sources: new Set([src]) });

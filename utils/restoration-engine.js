@@ -47,6 +47,8 @@ export class RestorationEngine {
         this._markerHelpers = {};
         this._showMarkerHelpers = false;
         this._validMarkerIds = new Set([1, 2, 3, 4, 5, 6, 7, 8]);
+        this._singleMarkerMode = false;
+        this._singleMarkerOffsetTemplate = null;
         this._detectionFps = 36;
         // Last raw markers received from worker (copy of data.markers)
         this._lastRawMarkers = [];
@@ -1005,6 +1007,12 @@ export class RestorationEngine {
             return { rotationOffset: o.rotationOffset.clone(), positionOffset: o.positionOffset.clone() };
         }
 
+        // In single-marker mode, allow any detected ID to use a shared template offset.
+        if (this._singleMarkerMode && this._singleMarkerOffsetTemplate) {
+            const t = this._singleMarkerOffsetTemplate;
+            return { rotationOffset: t.rotationOffset.clone(), positionOffset: t.positionOffset.clone() };
+        }
+
         const rot = new THREE.Quaternion();
         const pos = new THREE.Vector3();
 
@@ -1383,12 +1391,15 @@ export class RestorationEngine {
         
         // Use all detected markers for debug/overlay, but filter for pose estimation
         const rawMarkers = data.markers || [];
-        const validMarkers = rawMarkers.filter(m => this._validMarkerIds.has(Number(m.id)));
+        const hasIdFilter = this._validMarkerIds instanceof Set && this._validMarkerIds.size > 0;
+        const validMarkers = hasIdFilter
+            ? rawMarkers.filter(m => this._validMarkerIds.has(Number(m.id)))
+            : rawMarkers.slice();
 
         // Keep a copy for UI / debug (all markers, with validity flag)
         this._lastRawMarkers = rawMarkers.map(m => ({
             id: m.id,
-            isValid: this._validMarkerIds.has(Number(m.id)),
+            isValid: hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true,
             corners: m.corners,
             rvec: m.rvec ? m.rvec.slice() : null,
             tvec: m.tvec ? m.tvec.slice() : null,
@@ -1705,7 +1716,7 @@ export class RestorationEngine {
         let anchorStatus = ''; // for status label
 
         // Force disable World Anchor if in single-marker mode to prevent "floating"
-        const isSingleMarkerMode = (this._validMarkerIds.size === 1);
+        const isSingleMarkerMode = !!this._singleMarkerMode;
         if (isSingleMarkerMode) {
              this._worldAnchorActive = false;
              this._worldAnchorBuildup = 0;
@@ -1955,7 +1966,7 @@ export class RestorationEngine {
 
     /** Handle lost-tracking with hysteresis timeout. */
     _handleTrackingLost(statusEl, now) {
-        const isSingleMarkerMode = (this._validMarkerIds && this._validMarkerIds.size === 1);
+        const isSingleMarkerMode = !!this._singleMarkerMode;
         this._framesWithoutDetection++;
         const elapsed = now - this._lastTrackingTime;
 
@@ -2042,7 +2053,8 @@ export class RestorationEngine {
             if (!c || c.length < 4) continue;
             
             // Check isValid property if available (added in recent update) or default to checking valid IDs
-            const isValid = (typeof m.isValid === 'boolean') ? m.isValid : this._validMarkerIds.has(Number(m.id));
+            const hasIdFilter = this._validMarkerIds instanceof Set && this._validMarkerIds.size > 0;
+            const isValid = (typeof m.isValid === 'boolean') ? m.isValid : (hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true);
             const color = isValid ? palette[m.id % palette.length] : '#ff0033'; // Red for invalid
 
             // Polygon outline

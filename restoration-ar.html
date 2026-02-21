@@ -545,11 +545,14 @@
                 const params = new URLSearchParams(window.location.search);
                 let singleModeConfig = null;
                 if (params.has('single')) {
-                    // use only marker ID 1 and treat its size as something large
-                    engine._validMarkerIds = new Set([1]);
+                    // single-marker mode: optional explicit ID, otherwise accept first detectable ID
+                    const markerIdParam = Number.parseInt(params.get('id') || '', 10);
+                    if (Number.isFinite(markerIdParam)) engine._validMarkerIds = new Set([markerIdParam]);
+                    else engine._validMarkerIds = new Set(); // empty => accept any ID
+                    engine._singleMarkerMode = true;
                     engine.markerSizeMM = 150; // 15cm printed marker
                     engine._trackingTimeout = 120; // avoid stale-pose lag when marker is lost
-                    engine._dictionaryName = (params.get('dict') || 'AUTO').toUpperCase();
+                    engine._dictionaryName = (params.get('dict') || 'AUTO');
                     // Improve detection for single large marker
                     engine._detectionFps = 30; 
                     engine._minMarkerPerimeter = 20; // Reduced to minimize distance requirement
@@ -564,8 +567,9 @@
                     const oz = params.has('oz')
                         ? (Number.parseFloat(params.get('oz')) || 0)
                         : defaultSingleOz;
-                    singleModeConfig = { ox, oy, oz };
-                    window.log('Single-marker mode: only ID 1 will be tracked', 'info');
+                    singleModeConfig = { ox, oy, oz, markerId: Number.isFinite(markerIdParam) ? markerIdParam : null };
+                    if (Number.isFinite(markerIdParam)) window.log(`Single-marker mode: tracking ID ${markerIdParam}`, 'info');
+                    else window.log('Single-marker mode: tracking first detectable marker ID', 'info');
                 }
 
                 await engine.init();
@@ -573,13 +577,21 @@
                 // Apply single-marker placement offsets after init so they override saved multi-marker layouts.
                 if (singleModeConfig) {
                     const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-                    engine.setMarkerOffsets({
-                        1: {
-                            pos: [singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz],
-                            quat: [rot.x, rot.y, rot.z, rot.w]
-                        }
-                    }, { persist: false });
-                    if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
+                    if (singleModeConfig.markerId != null) {
+                        engine.setMarkerOffsets({
+                            [singleModeConfig.markerId]: {
+                                pos: [singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz],
+                                quat: [rot.x, rot.y, rot.z, rot.w]
+                            }
+                        }, { persist: false });
+                        if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([singleModeConfig.markerId]);
+                    } else {
+                        engine._singleMarkerOffsetTemplate = {
+                            positionOffset: new THREE.Vector3(singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz),
+                            rotationOffset: rot.clone()
+                        };
+                        if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds(null);
+                    }
                     window.log(`Single-marker offset active: x=${singleModeConfig.ox.toFixed(3)} y=${singleModeConfig.oy.toFixed(3)} z=${singleModeConfig.oz.toFixed(3)}`, 'info');
                 }
 
