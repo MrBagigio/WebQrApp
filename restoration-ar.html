@@ -462,26 +462,8 @@
     <!-- Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
         onerror="window.log && window.log('Errore Three.js CDN','error')"></script>
-    <script>
-        // fflate failover chain
-        (function () {
-            var cdns = [
-                'vendor/fflate.min.js',
-                'https://cdnjs.cloudflare.com/ajax/libs/fflate/0.8.0/fflate.min.js',
-                'https://unpkg.com/fflate@0.8.0/lib/browser.min.js',
-                'https://cdn.jsdelivr.net/npm/fflate@0.8.0/lib/browser.min.js'
-            ];
-            function loadFflate(idx) {
-                if (idx >= cdns.length) { window.log && window.log('fflate fallito ovunque', 'error'); return; }
-                var s = document.createElement('script');
-                s.src = cdns[idx];
-                s.onload = function () { window.log && window.log('fflate OK (' + cdns[idx] + ')'); };
-                s.onerror = function () { loadFflate(idx + 1); };
-                document.head.appendChild(s);
-            }
-            loadFflate(0);
-        })();
-    </script>
+    <script src="vendor/fflate.min.js"
+        onerror="window.log && window.log('Errore fflate locale (vendor/fflate.min.js)','error')"></script>
     <script>
         // size-slider hook (outside of fflate IIFE)
         document.addEventListener('DOMContentLoaded', () => {
@@ -561,14 +543,33 @@
 
                 // check for single-marker mode via query string
                 const params = new URLSearchParams(window.location.search);
+                let singleModeConfig = null;
                 if (params.has('single')) {
                     // use only marker ID 1 and treat its size as something large
                     engine._validMarkerIds = new Set([1]);
                     engine.markerSizeMM = 150; // 15cm printed marker
+                    const ox = Number.parseFloat(params.get('ox') || '0') || 0;
+                    const oy = Number.parseFloat(params.get('oy') || '0') || 0;
+                    const oz = Number.parseFloat(params.get('oz') || '0') || 0;
+                    singleModeConfig = { ox, oy, oz };
                     window.log('Single-marker mode: only ID 1 will be tracked', 'info');
                 }
 
                 await engine.init();
+
+                // Apply single-marker placement offsets after init so they override saved multi-marker layouts.
+                if (singleModeConfig) {
+                    const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
+                    engine.setMarkerOffsets({
+                        1: {
+                            positionOffset: new THREE.Vector3(singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz),
+                            rotationOffset: rot
+                        }
+                    }, { persist: false });
+                    if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
+                    window.log(`Single-marker offset active: x=${singleModeConfig.ox.toFixed(3)} y=${singleModeConfig.oy.toFixed(3)} z=${singleModeConfig.oz.toFixed(3)}`, 'info');
+                }
+
                 window.log('Engine pronto!');
                 
                 // --- Init UI Components ---

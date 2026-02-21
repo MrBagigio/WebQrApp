@@ -2091,6 +2091,79 @@ export class RestorationEngine {
             ctx.fillText(lines[i], x, y + i * lineH);
         }
         ctx.restore();
+
+        this._drawProjectedModelAxes(ctx);
+    }
+
+    _drawProjectedModelAxes(ctx) {
+        if (!this.modelGroup || !this.modelGroup.visible || !this.camera || !this.overlay) return;
+
+        const w = this.overlay.width;
+        const h = this.overlay.height;
+        if (!w || !h) return;
+
+        const origin = new THREE.Vector3();
+        const worldQ = new THREE.Quaternion();
+        this.modelGroup.getWorldPosition(origin);
+        this.modelGroup.getWorldQuaternion(worldQ);
+
+        const axisLen = Math.max(0.04, (this.markerSizeMM / 1000) * 0.45);
+        const worldX = origin.clone().add(new THREE.Vector3(axisLen, 0, 0).applyQuaternion(worldQ));
+        const worldY = origin.clone().add(new THREE.Vector3(0, axisLen, 0).applyQuaternion(worldQ));
+        const worldZ = origin.clone().add(new THREE.Vector3(0, 0, axisLen).applyQuaternion(worldQ));
+
+        const projectToScreen = (worldPos) => {
+            const p = worldPos.clone().project(this.camera);
+            if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+            return {
+                x: (p.x * 0.5 + 0.5) * w,
+                y: (-p.y * 0.5 + 0.5) * h
+            };
+        };
+
+        const sO = projectToScreen(origin);
+        const sX = projectToScreen(worldX);
+        const sY = projectToScreen(worldY);
+        const sZ = projectToScreen(worldZ);
+        if (!sO || !sX || !sY || !sZ) return;
+
+        ctx.save();
+        ctx.lineWidth = 2;
+
+        ctx.strokeStyle = '#ff3333'; // X axis
+        ctx.beginPath();
+        ctx.moveTo(sO.x, sO.y);
+        ctx.lineTo(sX.x, sX.y);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#33ff66'; // Y axis
+        ctx.beginPath();
+        ctx.moveTo(sO.x, sO.y);
+        ctx.lineTo(sY.x, sY.y);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#44aaff'; // Z axis
+        ctx.beginPath();
+        ctx.moveTo(sO.x, sO.y);
+        ctx.lineTo(sZ.x, sZ.y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(sO.x, sO.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = '10px monospace';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('pivot', sO.x + 6, sO.y - 6);
+
+        ctx.fillStyle = '#ff3333';
+        ctx.fillText('X', sX.x + 3, sX.y + 3);
+        ctx.fillStyle = '#33ff66';
+        ctx.fillText('Y', sY.x + 3, sY.y + 3);
+        ctx.fillStyle = '#44aaff';
+        ctx.fillText('Z', sZ.x + 3, sZ.y + 3);
+        ctx.restore();
     }
 
     // ── Render loop ──────────────────────────────────────────────────────────
