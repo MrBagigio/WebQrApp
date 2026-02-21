@@ -563,7 +563,7 @@
                     
                     const ox = Number.parseFloat(params.get('ox') || '0') || 0;
                     const oy = Number.parseFloat(params.get('oy') || '0') || 0;
-                    const defaultSingleOz = 0.055; // 15cm marker: center->top edge 7.5cm, keep model at 2cm from top edge => 5.5cm
+                    const defaultSingleOz = 0.135; // requested: 13.5cm from marker center on Z
                     const oz = params.has('oz')
                         ? (Number.parseFloat(params.get('oz')) || 0)
                         : defaultSingleOz;
@@ -624,7 +624,12 @@
                 // Goal: after marker lock is stable, user can switch to world-tracking AR.
                 // Note: true ARKit world tracking is available only when browser/runtime exposes WebXR immersive-ar.
                 const enterARBtn = document.getElementById('enter-ar-btn');
-                if (enterARBtn && engine && engine.supportsWebXR) {
+                const noLockMode = !!engine._singleMarkerMode;
+                if (noLockMode && enterARBtn) {
+                    enterARBtn.style.display = 'none';
+                    window.log('No-lock mode attivo: controlli LOCK/AR nascosti.', 'info');
+                }
+                if (!noLockMode && enterARBtn && engine && engine.supportsWebXR) {
                     const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
                     let webxrSupported = false;
                     let markerLockFallback = false;

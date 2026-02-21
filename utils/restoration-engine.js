@@ -449,29 +449,26 @@ export class RestorationEngine {
         this.log('Corner-flow SSD threshold set: ' + this._cornerFlowSSDThreshold);
     }
 
-    // Anchor-lock API: enable/disable automatic locked pose behavior
-    setAnchorLockEnabled(enable) { this._anchorLockEnabled = !!enable; this.log('Anchor-lock ' + (this._anchorLockEnabled ? 'enabled' : 'disabled')); }
+    // Anchor-lock API disabled by project requirement (no lock behavior).
+    setAnchorLockEnabled(_enable) {
+        this._anchorLockEnabled = false;
+        this._anchorLock = null;
+        this.log('Anchor-lock disattivato (modalità no-lock)');
+    }
 
     // ── World Anchor public API ──────────────────────────────────────────────
 
-    /** Check whether the world anchor is currently active (model is locked). */
-    isWorldAnchorActive() { return !!this._worldAnchorActive; }
+    /** Check whether the world anchor is currently active (locked state is forced off). */
+    isWorldAnchorActive() { return false; }
 
-    /** Manually force-lock the model at its current pose. */
+    /** Manually force-lock disabled by project requirement. */
     forceWorldAnchorLock() {
-        if (!this.modelGroup) return false;
-        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        const trackingFresh = this.isTracking && (now - this._lastTrackingTime) < this._trackingTimeout;
-        if (!trackingFresh || !this.modelGroup.visible) {
-            this.log('World Anchor non attivato: inquadra prima marker stabili.', 'warn');
-            return false;
-        }
-        this._worldAnchorActive = true;
-        this._worldAnchorPos = this.modelGroup.position.clone();
-        this._worldAnchorQuat = this.modelGroup.quaternion.clone();
-        this._worldAnchorBuildup = this._worldAnchorBuildupTarget;
-        this.log('World Anchor FORZATO');
-        return true;
+        this._worldAnchorActive = false;
+        this._worldAnchorBuildup = 0;
+        this._worldAnchorPos = null;
+        this._worldAnchorQuat = null;
+        this.log('World Anchor disattivato (modalità no-lock)', 'warn');
+        return false;
     }
 
     /** Manually unlock the world anchor so tracking resumes normally. */
@@ -480,7 +477,7 @@ export class RestorationEngine {
         this._worldAnchorBuildup = 0;
         this._worldAnchorPos = null;
         this._worldAnchorQuat = null;
-        this.log('World Anchor RILASCIATO');
+        this.log('World Anchor disattivato');
     }
 
     /** Get world anchor state for UI / debug. */
@@ -525,7 +522,10 @@ export class RestorationEngine {
         };
     }
 
-    setAnchorAutoLockEnabled(enable) { this._anchorAutoLockEnabled = !!enable; this.log('Anchor auto-lock ' + (this._anchorAutoLockEnabled ? 'enabled' : 'disabled')); }
+    setAnchorAutoLockEnabled(_enable) {
+        this._anchorAutoLockEnabled = false;
+        this.log('Anchor auto-lock disattivato (modalità no-lock)');
+    }
 
     // Auto-select the most stable marker seen over the short-term history
     autoSelectAnchor({ persist = true, minPresenceFraction = 0.25 } = {}) {
@@ -1708,12 +1708,12 @@ export class RestorationEngine {
             }
         }
 
-        // ── Step 5: World Anchor logic (Disabled for single marker mode to prevent floating) ──
-        // idea: once multiple markers consistently agree, LOCK the pose so
-        // the model stays perfectly still while the user walks around it.
+        // ── Step 5: No-lock logic ──
+        // By requirement, all lock behaviors are disabled. Pose must remain marker-driven.
 
         let finalPos, finalQuat;
-        let anchorStatus = ''; // for status label
+        let anchorStatus = ''; // lock disabled -> always empty
+        const lockEnabled = false;
 
         // Force disable World Anchor if in single-marker mode to prevent "floating"
         const isSingleMarkerMode = !!this._singleMarkerMode;
@@ -1722,6 +1722,9 @@ export class RestorationEngine {
              this._worldAnchorBuildup = 0;
         }
 
+        this._worldAnchorActive = false;
+        this._worldAnchorBuildup = 0;
+
         if (!this._hasFirstPose) {
             // First frame: snap instantly, begin anchor buildup
             finalPos = fusedPos.clone();
@@ -1729,7 +1732,7 @@ export class RestorationEngine {
             this._hasFirstPose = true;
             this._worldAnchorBuildup = 0;
             this._worldAnchorActive = false;
-        } else if (this._worldAnchorActive) {
+        } else if (lockEnabled && this._worldAnchorActive) {
             // IMPORTANT:
             // Do NOT freeze modelGroup pose in camera-space here, otherwise the
             // model appears to stick to the phone. Keep lock as a STABILIZATION
@@ -1839,7 +1842,7 @@ export class RestorationEngine {
             }
 
             // In lock mode, aggressively suppress jitter while preserving world-relative tracking.
-            if (this._worldAnchorActive) {
+            if (lockEnabled && this._worldAnchorActive) {
                 posAlpha *= 0.45;
                 rotAlpha *= 0.48;
 
@@ -1874,7 +1877,7 @@ export class RestorationEngine {
                 rotAlpha = Math.max(rotAlpha, Math.min(0.82, rotAlpha * 2.0 + 0.08));
 
                 // If lock is still active while board clearly moved, release lock earlier.
-                if (this._worldAnchorActive) {
+                if (lockEnabled && this._worldAnchorActive) {
                     const unlockPos = this._worldAnchorBreakDistance * this._fastRepositionUnlockRatio;
                     const unlockRot = this._worldAnchorBreakAngle * this._fastRepositionUnlockRatio;
                     if (posDelta > unlockPos || rotDelta > unlockRot) {
@@ -1897,7 +1900,7 @@ export class RestorationEngine {
             finalQuat = this.modelGroup.quaternion.clone().slerp(fusedQuat, rotAlpha);
 
             // ── Build up anchor confidence ──
-            if (pool.length >= this._worldAnchorMinMarkers) {
+            if (lockEnabled && pool.length >= this._worldAnchorMinMarkers) {
                 // Check that candidates agree with each other tightly
                 let maxSpread = 0;
                 for (let i = 0; i < pool.length; i++) {
