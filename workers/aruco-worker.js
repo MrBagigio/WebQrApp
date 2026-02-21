@@ -51,7 +51,7 @@ self.onmessage = (e) => {
     const msg = e.data;
     try {
         switch (msg.type) {
-            case 'init':
+            case 'init': {
                 // allow caller to specify dictionary (e.g. ARUCO, ARUCO_5X5_1000, ARUCO_4X4_1000, ARUCO_MIP_36h12, etc.)
                 const dictNameRaw = msg.dictionaryName || 'ARUCO';
                 const dictName = String(dictNameRaw);
@@ -86,8 +86,9 @@ self.onmessage = (e) => {
                 postMessage({ type: 'log', message: 'js-aruco2 pronto (' + dictName + ')' });
                 postMessage({ type: 'ready' });
                 break;
+            }
 
-            case 'config':
+            case 'config': {
                 if (typeof msg.markerLength === 'number') markerLength = msg.markerLength;
                 if (typeof msg.cornerSmoothing === 'number') cornerSmoothing = Math.max(0, Math.min(1, msg.cornerSmoothing));
                 if (typeof msg.focalLength === 'number') focalLength = msg.focalLength;
@@ -147,10 +148,12 @@ self.onmessage = (e) => {
 
                 postMessage({ type: 'log', message: `worker config updated: markerLength=${markerLength}, cornerSmoothing=${cornerSmoothing.toFixed(2)}, cornerFlow=${cornerFlowEnabled}, subpix=${useSubpixel}, april=${useAprilTag && aprilReady}` });
                 break;
+            }
 
-            case 'frame':
+            case 'frame': {
                 processFrame(msg);
                 break;
+            }
         }
     } catch (err) {
         postMessage({ type: 'error', error: (err && err.message) || String(err) });
