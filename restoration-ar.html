@@ -550,7 +550,8 @@
                     engine.markerSizeMM = 150; // 15cm printed marker
                     // Improve detection for single large marker
                     engine._detectionFps = 30; 
-                    engine._minMarkerPerimeter = 40; // Reduced from 100 to allow detection from further away
+                    engine._minMarkerPerimeter = 20; // Reduced to minimize distance requirement
+                    engine._maxDetectSize = 1024; // Increase resolution for better feature extraction
                     engine._debugOverlayEnabled = true; 
                     engine.showMarkerHelpers(true);
 
