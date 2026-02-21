@@ -562,8 +562,8 @@
                     const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
                     engine.setMarkerOffsets({
                         1: {
-                            positionOffset: new THREE.Vector3(singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz),
-                            rotationOffset: rot
+                            pos: [singleModeConfig.ox, singleModeConfig.oy, singleModeConfig.oz],
+                            quat: [rot.x, rot.y, rot.z, rot.w]
                         }
                     }, { persist: false });
                     if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
