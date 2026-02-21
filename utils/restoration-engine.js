@@ -2090,7 +2090,9 @@ export class RestorationEngine {
         if (!w) return;
 
         const lines = [];
-        lines.push(`trk:${this.isTracking ? 'ON' : 'OFF'} lock:${this._worldAnchorActive ? 'ON' : 'OFF'} markers:${(this._lastRawMarkers || []).length}`);
+        // Show detected IDs explicitly in HUD
+        const detectedIds = (this._lastRawMarkers || []).map(m => m.id).join(',');
+        lines.push(`trk:${this.isTracking ? 'ON' : 'OFF'} IDs:[${detectedIds}] lock:${this._worldAnchorActive ? 'ON' : 'OFF'}`);
         if (stats) {
             lines.push(`pool ${stats.poolSize}/${stats.candidateSize} conf ${stats.avgConfidence.toFixed(2)} spread ${(stats.spread * 1000).toFixed(0)}mm`);
             lines.push(`view ${Math.round(stats.viewAngleDeg)}° th ${stats.adaptiveConfidenceThreshold.toFixed(2)} out ${stats.adaptiveOutlierDistance.toFixed(2)}m`);

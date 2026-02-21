@@ -549,10 +549,11 @@
                     engine._validMarkerIds = new Set([1]);
                     engine.markerSizeMM = 150; // 15cm printed marker
                     // Improve detection for single large marker
-                    engine._detectionFps = 30; // Reduce FPS slightly to give more time per frame if needed
-                    engine._minMarkerPerimeter = 100; // Increase min perimeter since it's a large marker (avoids noise)
-                    engine._debugOverlayEnabled = true; // Force debug overlay
-                    engine.showMarkerHelpers(true); // Force 3D marker helpers
+                    engine._detectionFps = 30; 
+                    engine._minMarkerPerimeter = 40; // Reduced from 100 to allow detection from further away
+                    engine._debugOverlayEnabled = true; 
+                    engine.showMarkerHelpers(true);
+
                     
                     const ox = Number.parseFloat(params.get('ox') || '0') || 0;
                     const oy = Number.parseFloat(params.get('oy') || '0') || 0;
