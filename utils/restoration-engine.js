@@ -1019,10 +1019,19 @@ export class RestorationEngine {
             return { rotationOffset: o.rotationOffset.clone(), positionOffset: o.positionOffset.clone() };
         }
 
-        // In single-marker mode, allow any detected ID to use a shared template offset.
+        // In single-marker mode, default to neutral offset:
+        // - no extra rotation (keeps the house perpendicular to the marker plane)
+        // - no position translation (house origin sits on marker center)
+        // A custom template can still override this behavior.
         if (this._singleMarkerMode && this._singleMarkerOffsetTemplate) {
             const t = this._singleMarkerOffsetTemplate;
             return { rotationOffset: t.rotationOffset.clone(), positionOffset: t.positionOffset.clone() };
+        }
+        if (this._singleMarkerMode) {
+            return {
+                rotationOffset: new THREE.Quaternion(),
+                positionOffset: new THREE.Vector3(0, 0, 0)
+            };
         }
 
         const rot = new THREE.Quaternion();
@@ -1344,7 +1353,7 @@ export class RestorationEngine {
                 cornerFlowEnabled: false, 
                 useSolvePnP: !!this._useSolvePnP, 
                 usePyrLKFlow: !!this._usePyrLKFlow,
-                useAprilTag: true  // Enable AprilTag support if available
+                useAprilTag: false
             }); 
         } catch (e) { /* ignore */ }
 
