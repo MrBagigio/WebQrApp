@@ -241,7 +241,7 @@ function processFrame(msg) {
     const addDet = (arr, src) => {
         for (const t of arr) {
             const id = Number(t.id);
-            if (!Number.isFinite(id)) continue; // Removed validMarkerIds check to allow debug of other markers
+            if (!Number.isFinite(id) || !validMarkerIds.has(id)) continue;
             const corners = (t.corners || []).map(c => ({ x: (c.x ?? c[0]), y: (c.y ?? c[1]) }));
             if (!corners || corners.length < 4) continue;
             if (src === 'apriltag') {

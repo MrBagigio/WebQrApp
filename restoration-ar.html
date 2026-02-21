@@ -545,21 +545,16 @@
                 engine._validMarkerIds = new Set([1]);
                 engine._singleMarkerMode = true;
                 engine.markerSizeMM = 150; // 15cm printed marker
-                engine._trackingTimeout = 120;
-                engine._dictionaryName = 'AUTO';
-                engine._detectionFps = 30; 
-                engine._minMarkerPerimeter = 20;
-                engine._maxDetectSize = 1024;
-                engine._debugOverlayEnabled = true; 
-                engine.showMarkerHelpers(true);
+                engine._dictionaryName = 'ARUCO';
+                engine._detectionFps = 24;
+                engine._minMarkerPerimeter = 40;
+                engine._maxDetectSize = 768;
+                engine._debugOverlayEnabled = false;
+                engine.showMarkerHelpers(false);
 
-                const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-                engine.setMarkerOffsets({
-                    1: {
-                        pos: [0, 0, 0],
-                        quat: [rot.x, rot.y, rot.z, rot.w]
-                    }
-                }, { persist: false });
+                if (typeof engine.setUseAprilTag === 'function') engine.setUseAprilTag(false);
+                if (typeof engine.setCornerFlowEnabled === 'function') engine.setCornerFlowEnabled(false);
+                if (typeof engine.setCornerSmoothing === 'function') engine.setCornerSmoothing(0);
                 if (typeof engine.setAnchorIds === 'function') engine.setAnchorIds([1]);
 
                 await engine.init();
