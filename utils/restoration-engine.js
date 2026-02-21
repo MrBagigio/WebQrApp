@@ -1693,12 +1693,19 @@ export class RestorationEngine {
             }
         }
 
-        // ── Step 5: World Anchor logic ─────────────────────────────────────
+        // ── Step 5: World Anchor logic (Disabled for single marker mode to prevent floating) ──
         // idea: once multiple markers consistently agree, LOCK the pose so
         // the model stays perfectly still while the user walks around it.
 
         let finalPos, finalQuat;
         let anchorStatus = ''; // for status label
+
+        // Force disable World Anchor if in single-marker mode to prevent "floating"
+        const isSingleMarkerMode = (this._validMarkerIds.size === 1);
+        if (isSingleMarkerMode) {
+             this._worldAnchorActive = false;
+             this._worldAnchorBuildup = 0;
+        }
 
         if (!this._hasFirstPose) {
             // First frame: snap instantly, begin anchor buildup
@@ -1805,7 +1812,16 @@ export class RestorationEngine {
             }
 
             // Single-marker: more conservative
-            if (pool.length === 1) { posAlpha *= 0.75; rotAlpha *= 0.80; }
+            if (pool.length === 1) { 
+                // In single marker mode, we trust the marker update more than history to avoid "floating"
+                // Increase responsiveness (alpha closer to 1) rather than damping
+                if (isSingleMarkerMode) {
+                   posAlpha = 0.8; 
+                   rotAlpha = 0.8;
+                } else {
+                   posAlpha *= 0.75; rotAlpha *= 0.80; 
+                }
+            }
 
             // In lock mode, aggressively suppress jitter while preserving world-relative tracking.
             if (this._worldAnchorActive) {
