@@ -420,6 +420,10 @@ function processFrame(msg) {
             }
         }
 
+        // Normalize corner order (top-left, top-right, bottom-right, bottom-left)
+        // before pose estimation. Inconsistent order causes center/orientation drift.
+        m.corners = normalizeMarkerCorners(m.corners);
+
         // Corners in overlay (full-resolution) space for drawing
         const corners = m.corners.map(c => [c.x * scaleX, c.y * scaleY]);
         const result = { id: m.id, corners };
@@ -591,6 +595,49 @@ function markerPerimeterPx(corners) {
         p += Math.hypot(dx, dy);
     }
     return p;
+}
+
+function normalizeMarkerCorners(corners) {
+    if (!Array.isArray(corners) || corners.length < 4) return corners;
+
+    const pts = corners.map(c => ({ x: Number(c.x), y: Number(c.y) }));
+
+    // 1) Sort by angle around centroid (stable circular order)
+    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+    pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+
+    // 2) Ensure clockwise winding in image coordinates (y down)
+    const signedArea = polygonSignedArea(pts);
+    if (signedArea < 0) pts.reverse();
+
+    // 3) Rotate list so first point is top-left (min x+y)
+    let start = 0;
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < pts.length; i++) {
+        const score = pts[i].x + pts[i].y;
+        if (score < best) {
+            best = score;
+            start = i;
+        }
+    }
+
+    return [
+        pts[start],
+        pts[(start + 1) % pts.length],
+        pts[(start + 2) % pts.length],
+        pts[(start + 3) % pts.length]
+    ];
+}
+
+function polygonSignedArea(pts) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        area += (a.x * b.y) - (b.x * a.y);
+    }
+    return area * 0.5;
 }
 
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }
