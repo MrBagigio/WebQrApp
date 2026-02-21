@@ -4,6 +4,9 @@
 importScripts('../vendor/js-aruco2.js');
 
 let detector = null;
+let detectors = null;
+let detectorNames = [];
+let detectorIndex = 0;
 let markerLength = 0.1;  // meters (default 100mm)
 let focalLength = 800;   // pixels (updated per frame)
 let canvas = null;       // reusable OffscreenCanvas
@@ -50,8 +53,33 @@ self.onmessage = (e) => {
         switch (msg.type) {
             case 'init':
                 // allow caller to specify dictionary (e.g. ARUCO, ARUCO_5X5_1000, ARUCO_4X4_1000, ARUCO_MIP_36h12, etc.)
-                const dictName = msg.dictionaryName || 'ARUCO';
-                detector = new AR.Detector({ dictionaryName: dictName });
+                const dictName = (msg.dictionaryName || 'ARUCO').toUpperCase();
+                detector = null;
+                detectors = null;
+                detectorNames = [];
+                detectorIndex = 0;
+
+                if (dictName === 'AUTO') {
+                    const candidates = ['ARUCO', 'ARUCO_4X4_50', 'ARUCO_5X5_1000', 'ARUCO_MIP_36H12'];
+                    const built = [];
+                    const names = [];
+                    for (const name of candidates) {
+                        try {
+                            built.push(new AR.Detector({ dictionaryName: name }));
+                            names.push(name);
+                        } catch (_err) {
+                            // ignore unsupported dictionaries in current build
+                        }
+                    }
+                    if (built.length > 0) {
+                        detectors = built;
+                        detectorNames = names;
+                    } else {
+                        detector = new AR.Detector({ dictionaryName: 'ARUCO' });
+                    }
+                } else {
+                    detector = new AR.Detector({ dictionaryName: dictName });
+                }
                 markerLength = msg.markerLength || markerLength;
                 postMessage({ type: 'log', message: 'js-aruco2 pronto (' + dictName + ')' });
                 postMessage({ type: 'ready' });
@@ -128,7 +156,7 @@ self.onmessage = (e) => {
 };
 
 function processFrame(msg) {
-    if (!detector) return;
+    if (!detector && (!detectors || !detectors.length)) return;
     const bitmap = msg.bitmap;
     if (!bitmap) return;
 
@@ -185,7 +213,20 @@ function processFrame(msg) {
 
     // always run fast ArUco detection (complimentary)
     try {
-        arDetected = detector.detect({ width: w, height: h, data: imageData.data }) || [];
+        if (detectors && detectors.length) {
+            for (let i = 0; i < detectors.length; i++) {
+                const idx = (detectorIndex + i) % detectors.length;
+                const d = detectors[idx];
+                const found = d.detect({ width: w, height: h, data: imageData.data }) || [];
+                if (found.length > 0) {
+                    arDetected = found;
+                    detectorIndex = idx;
+                    break;
+                }
+            }
+        } else {
+            arDetected = detector.detect({ width: w, height: h, data: imageData.data }) || [];
+        }
     } catch (e) {
         arDetected = [];
     }

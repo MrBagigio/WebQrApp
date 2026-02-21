@@ -217,7 +217,11 @@ export class RestorationEngine {
             let stream;
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' }
+                    video: {
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
                 });
             } catch (err) {
                 if (err.name === 'NotAllowedError') {
@@ -1297,7 +1301,7 @@ export class RestorationEngine {
     _initWorker() {
         this.worker = new Worker('workers/aruco-worker.js');
         // allow dictionary selection via query string for GitHub Pages convenience
-        let dict = 'ARUCO';
+        let dict = this._dictionaryName || 'ARUCO';
         try {
             const params = new URLSearchParams(window.location.search);
             const dq = params.get('dict');
@@ -1910,7 +1914,13 @@ export class RestorationEngine {
         }
 
         // ── Step 6: Update target pose (render loop applies high-frequency smoothing) ──
-        if (!this._poseTargetPosition || !this._poseTargetQuaternion || !this._hasFirstPose) {
+        if (isSingleMarkerMode) {
+            // Single-marker mode: apply pose directly to avoid visible trailing/sticking.
+            this.modelGroup.position.copy(finalPos);
+            this.modelGroup.quaternion.copy(finalQuat);
+            this._poseTargetPosition = finalPos.clone();
+            this._poseTargetQuaternion = finalQuat.clone();
+        } else if (!this._poseTargetPosition || !this._poseTargetQuaternion || !this._hasFirstPose) {
             this._poseTargetPosition = finalPos.clone();
             this._poseTargetQuaternion = finalQuat.clone();
             this.modelGroup.position.copy(finalPos);
@@ -1945,8 +1955,33 @@ export class RestorationEngine {
 
     /** Handle lost-tracking with hysteresis timeout. */
     _handleTrackingLost(statusEl, now) {
+        const isSingleMarkerMode = (this._validMarkerIds && this._validMarkerIds.size === 1);
         this._framesWithoutDetection++;
         const elapsed = now - this._lastTrackingTime;
+
+        // In single-marker mode, do not keep stale camera-space pose alive.
+        // If detection is missing for even one frame, hide/reset immediately to avoid
+        // the visual "model stuck to screen" effect while the user moves the phone.
+        if (isSingleMarkerMode && this._framesWithoutDetection >= 1) {
+            this._worldAnchorActive = false;
+            this._worldAnchorBuildup = 0;
+            this._worldAnchorPos = null;
+            this._worldAnchorQuat = null;
+            this._positionHistory = [];
+            this._poseTargetPosition = null;
+            this._poseTargetQuaternion = null;
+            this._lastRenderTime = 0;
+            this._lastPoseMeasurementTime = 0;
+            this._viewAngleEMA = 0;
+
+            this.isTracking = false;
+            this.modelGroup.visible = false;
+            this._hasFirstPose = false;
+            statusEl.textContent = 'RICERCA TARGET...';
+            statusEl.style.color = 'var(--p-dim)';
+            statusEl.classList.remove('tracking');
+            return;
+        }
 
         if (this._lastTrackingTime > 0 && elapsed < this._trackingTimeout) {
             // IMPORTANT: avoid camera-follow illusion while locked and markers are missing.
