@@ -1031,7 +1031,9 @@ export class RestorationEngine {
         // All markers are flat on the table (no side markers).
         // Base rotation aligns marker normal to house up.
         // NOTE: do NOT add extra 180° yaw here, otherwise center offset is mirrored.
-        rot.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
+        // The marker's Z axis points UP from the paper. The house's Y axis points UP.
+        // We need to rotate the house so its Y axis aligns with the marker's Z axis.
+        rot.setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0, 'XYZ'));
 
         // Marker positions (centers) in meters:
         // Layout from NewArUcoSetup.png (bottom side = house front):
