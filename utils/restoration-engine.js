@@ -179,6 +179,7 @@ export class RestorationEngine {
         this._useAprilTag = false;
         this._useSolvePnP = false;
         this._usePyrLKFlow = false;
+        this._maxDetectSize = 768; // Increased from default to help with larger markers/details
 
         // If true, swap mapping of marker IDs 2/3 (Left/Right) — useful when physical markers are inverted
         this._swapLeftRight = false;
