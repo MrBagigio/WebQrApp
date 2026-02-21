@@ -1178,7 +1178,8 @@ export class RestorationEngine {
         const onLoaded = (object, opts) => {
             // Apply global model correction (yaw) to match physical orientation.
             // Yaw: fix virtual house yaw inversion vs physical setup
-            object.rotation.set(0, Math.PI, 0, 'YXZ');
+            // We use rotateOnWorldAxis to preserve any X/Z rotations applied by FBXLoader (e.g. Z-up to Y-up conversion)
+            object.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), Math.PI);
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
