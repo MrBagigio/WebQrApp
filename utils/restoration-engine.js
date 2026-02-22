@@ -1023,12 +1023,22 @@ export class RestorationEngine {
             );
         }
 
-        // Both OpenCV and js-aruco2 POSIT use: X right, Y down, Z forward
-        // Three.js uses: X right, Y up, Z backward
-        // Transformation: F * R * F where F = diag(1, -1, -1)
+        if (source === 'opencv-pnp') {
+            // OpenCV: X right, Y down, Z forward
+            // Three.js: X right, Y up, Z backward
+            // Transformation: F * R * F where F = diag(1, -1, -1)
+            return {
+                position: new THREE.Vector3(tvec[0], -tvec[1], -tvec[2]),
+                quaternion: new THREE.Quaternion(q.x, -q.y, -q.z, q.w)
+            };
+        }
+
+        // POSIT (js-aruco2): X right, Y up, Z forward
+        // Three.js: X right, Y up, Z backward
+        // Transformation: F * R * F where F = diag(1, 1, -1)
         return {
-            position: new THREE.Vector3(tvec[0], -tvec[1], -tvec[2]),
-            quaternion: new THREE.Quaternion(q.x, -q.y, -q.z, q.w)
+            position: new THREE.Vector3(tvec[0], tvec[1], -tvec[2]),
+            quaternion: new THREE.Quaternion(-q.x, -q.y, q.z, q.w)
         };
     }
 
