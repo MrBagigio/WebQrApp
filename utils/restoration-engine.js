@@ -525,13 +525,13 @@ export class RestorationEngine {
             } else {
                 this.posFilter = new PoseFilters.PredictivePositionFilter({
                     responsiveness: responsiveness,
-                    velocitySmoothing: 0.25,      // smoother velocity estimation for board setup
-                    predictionFactor: 0.2,         // conservative prediction to reduce inter-frame drift
-                    maxVelocity: 1.0,              // real camera movement is slow; reject fast spikes
+                    velocitySmoothing: 0.5,        // faster velocity estimation
+                    predictionFactor: 0.5,         // trust velocity more for inter-frame prediction
+                    maxVelocity: 3.0,              // allow faster movements without clamping
                     maxPredictionDt: 0.033,
-                    maxPredictionStep: 0.015,
-                    velocityDamping: 0.9,
-                    positionDeadband: 0.0015
+                    maxPredictionStep: 0.05,       // allow larger prediction steps
+                    velocityDamping: 0.85,
+                    positionDeadband: 0.001        // 1mm deadband
                 });
                 this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)}`);
             }
@@ -1213,8 +1213,9 @@ export class RestorationEngine {
         }
 
         // Smoothly interpolate render transform towards target
-        this.modelGroup.position.lerp(this._poseTargetPosition, 0.8);
-        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, 0.8);
+        // Use a high lerp factor (0.95) to be very responsive while still smoothing out 30fps stutter
+        this.modelGroup.position.lerp(this._poseTargetPosition, 0.95);
+        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, 0.95);
     }
 
     /**
@@ -1252,7 +1253,8 @@ export class RestorationEngine {
             this._poseTargetPosition = filteredPos.clone();
             this._poseTargetQuaternion = filteredQuat.clone();
         } else {
-            const conf = m.confidence || 1.0;
+            // Boost confidence to avoid sluggishness on decent frames
+            const conf = m.confidence ? Math.min(1.0, m.confidence * 1.5 + 0.2) : 1.0;
             filteredPos = this.posFilter ? this.posFilter.update(correctedPosition, dt, conf) : correctedPosition;
             filteredQuat = this.quatFilter ? this.quatFilter.update(finalQuat, dt, conf) : finalQuat;
             
