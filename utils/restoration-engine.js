@@ -824,6 +824,8 @@ export class RestorationEngine {
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
+            // lift model by 0.13 meters (13 cm) along Y so base sits 13cm above marker
+            object.position.y += 0.13;
             object.traverse(child => {
                 if (child.isMesh) {
                     child.castShadow = true;
