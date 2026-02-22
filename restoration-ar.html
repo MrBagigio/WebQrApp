@@ -84,6 +84,11 @@
     </div>
     <!-- Restoration slider -->
     <input type="range" id="restoration-range" min="0" max="100" value="0" style="position:absolute;bottom:20px;left:5%;width:90%;z-index:1000;">
+    <!-- Model Y offset tuning (cm) -->
+    <div style="position:absolute;top:10px;right:10px;z-index:1002;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;color:#fff;font:12px/1.4 sans-serif;">
+        <div>Offset Y: <span id="model-y-offset-value">0.0 cm</span></div>
+        <input type="range" id="model-y-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
+    </div>
 
 
     <!-- Libraries -->
@@ -129,7 +134,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=2';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=3';
 
         async function main() {
             const engine = new RestorationEngine();
@@ -157,6 +162,7 @@
             if (typeof engine.setAnchorIds==='function') engine.setAnchorIds([1]);
 
             await engine.init();
+            if (typeof engine.setModelYOffset === 'function') engine.setModelYOffset(0);
             console.log('engine ready');
         }
 
@@ -167,6 +173,20 @@
         if (slider) {
             slider.addEventListener('input', (e) => {
                 if (window.engine) window.engine.setRestorationLevel(e.target.value/100);
+            });
+        }
+
+        const yOffsetSlider = document.getElementById('model-y-offset');
+        const yOffsetValue = document.getElementById('model-y-offset-value');
+        if (yOffsetSlider && yOffsetValue) {
+            const updateLabel = (cm) => { yOffsetValue.textContent = `${cm.toFixed(1)} cm`; };
+            updateLabel(Number(yOffsetSlider.value));
+            yOffsetSlider.addEventListener('input', (e) => {
+                const cm = Number(e.target.value);
+                updateLabel(cm);
+                if (window.engine && typeof window.engine.setModelYOffset === 'function') {
+                    window.engine.setModelYOffset(cm / 100);
+                }
             });
         }
     </script>

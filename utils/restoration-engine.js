@@ -48,6 +48,7 @@ export class RestorationEngine {
         this._showMarkerHelpers = false;
         this._markerPoseAxes = null;
         this._housePivotHelper = null;
+        this._modelYOffset = 0; // meters, manual vertical tuning from UI
         this._validMarkerIds = new Set([1]);
         this._singleMarkerMode = true;
         this._singleMarkerOffsetTemplate = null;
@@ -326,11 +327,24 @@ export class RestorationEngine {
     setHouseSizeMM(mm) {
         this.houseSizeMM = Math.max(10, Number(mm) || 200);
         const target = this.houseSizeMM / 1000;
-        if (this.restoredModel)  this._scaleModel(this.restoredModel, target);
-        if (this.destroyedModel) this._scaleModel(this.destroyedModel, target);
+        if (this.restoredModel) {
+            this._scaleModel(this.restoredModel, target);
+            this.restoredModel.position.y = this._modelYOffset;
+        }
+        if (this.destroyedModel) {
+            this._scaleModel(this.destroyedModel, target);
+            this.destroyedModel.position.y = this._modelYOffset;
+        }
         this._recomputeBBox();
         this._repositionMarkerHelpers();
         this.log(`Casa: ${this.houseSizeMM} mm → ${target.toFixed(3)} m`);
+    }
+
+    setModelYOffset(meters) {
+        this._modelYOffset = Number.isFinite(Number(meters)) ? Number(meters) : this._modelYOffset;
+        if (this.restoredModel) this.restoredModel.position.y = this._modelYOffset;
+        if (this.destroyedModel) this.destroyedModel.position.y = this._modelYOffset;
+        this.log(`Model Y offset: ${(this._modelYOffset * 100).toFixed(1)} cm`);
     }
 
     updateDetectionFps(fps) {
@@ -824,8 +838,8 @@ export class RestorationEngine {
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
-            // lift model by 0.18 meters (18 cm) along Y so base sits 18cm above marker (added extra 5cm)
-            object.position.y += 0.18;
+            // manual UI offset: default 0 (centered on marker), user-adjustable at runtime
+            object.position.y = this._modelYOffset;
             object.traverse(child => {
                 if (child.isMesh) {
                     child.castShadow = true;
