@@ -374,11 +374,11 @@ export class RestorationEngine {
     _applyOffsets() {
         if (this.restoredModel) {
             const basePos = this.restoredModel.userData?.basePosition;
-            if (basePos) this.restoredModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
+            if (basePos) this.restoredModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z - this._modelZOffset);
         }
         if (this.destroyedModel) {
             const basePos = this.destroyedModel.userData?.basePosition;
-            if (basePos) this.destroyedModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
+            if (basePos) this.destroyedModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z - this._modelZOffset);
         }
     }
 
@@ -658,7 +658,7 @@ export class RestorationEngine {
         if (!(baseScale instanceof THREE.Vector3) || !(basePosition instanceof THREE.Vector3)) return;
 
         object.scale.copy(baseScale).multiplyScalar(this._modelScaleFactor);
-        object.position.set(basePosition.x + this._modelXOffset, basePosition.y + this._modelYOffset, basePosition.z + this._modelZOffset);
+        object.position.set(basePosition.x + this._modelXOffset, basePosition.y + this._modelYOffset, basePosition.z - this._modelZOffset);
         object.updateMatrixWorld(true);
     }
 
@@ -688,10 +688,11 @@ export class RestorationEngine {
         const centre = new THREE.Vector3();
         box2.getCenter(centre);
         
-        // Sposta l'oggetto in modo che il centro (X, Z) sia a 0, e la base (min.y) sia a 0
+        // Sposta l'oggetto in modo che il centro (X, Y) sia a 0, e la base (max.z) sia a 0
+        // Nota: l'asse UP della casetta è -Z a causa della rotazione applicata al caricamento.
         object.position.x -= centre.x;
-        object.position.z -= centre.z;
-        object.position.y -= box2.min.y;
+        object.position.y -= centre.y;
+        object.position.z -= box2.max.z;
         
         // Aggiorna la matrice per assicurarsi che il pivot sia corretto
         object.updateMatrixWorld(true);
