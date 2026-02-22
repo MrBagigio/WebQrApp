@@ -429,7 +429,7 @@ export class RestorationEngine {
     applyStabilityPreset(name = 'default') {
         const presets = {
             minimal: {
-                filter: { positionSmoothing: 0.10, rotationTimeConstant: 0.085 },
+                filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.04 },
                 posHist: 1, maxJump: 0.25, minPeri: 30, anchorBoost: 1.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
                 fps: 20,
@@ -440,7 +440,7 @@ export class RestorationEngine {
                 }
             },
             mobile: {
-                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.10 },
+                filter: { positionSmoothing: 0.08, rotationTimeConstant: 0.05 },
                 posHist: 3, maxJump: 0.3, minPeri: 30, anchorBoost: 2.5,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
                 fps: 60,
@@ -452,7 +452,7 @@ export class RestorationEngine {
                 }
             },
             desktop: {
-                filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.05 },
+                filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.04 },
                 posHist: 1, maxJump: 0.5, minPeri: 25,
                 ekf: false, autoLock: false, clearLock: true,
                 fps: 60,
@@ -1232,13 +1232,6 @@ export class RestorationEngine {
         // This compensates small focal/pose errors that appear as lateral drift while orbiting.
         const correctedPosition = this._applyMarkerCenterLock(position, m);
 
-        // Visualizza gli assi della posa marker così da confrontarli col pivot casetta
-        if (this._markerPoseAxes) {
-            this._markerPoseAxes.visible = this._debugOverlayEnabled;
-            this._markerPoseAxes.position.copy(correctedPosition);
-            this._markerPoseAxes.quaternion.copy(quaternion);
-        }
-
         // Keep tracked quaternion pure marker pose.
         // Model up-axis correction is already baked during FBX loading.
         const finalQuat = quaternion.clone();
@@ -1246,21 +1239,33 @@ export class RestorationEngine {
         const dt = (now - (this._lastPoseMeasurementTime || now)) / 1000;
         this._lastPoseMeasurementTime = now;
 
+        let filteredPos, filteredQuat;
+
         if (!this._hasFirstPose) {
             if (this.posFilter) this.posFilter.reset(correctedPosition);
             if (this.quatFilter) this.quatFilter.reset(finalQuat);
             this._hasFirstPose = true;
-            this.modelGroup.position.copy(correctedPosition);
-            this.modelGroup.quaternion.copy(finalQuat);
-            this._poseTargetPosition = correctedPosition.clone();
-            this._poseTargetQuaternion = finalQuat.clone();
+            filteredPos = correctedPosition.clone();
+            filteredQuat = finalQuat.clone();
+            this.modelGroup.position.copy(filteredPos);
+            this.modelGroup.quaternion.copy(filteredQuat);
+            this._poseTargetPosition = filteredPos.clone();
+            this._poseTargetQuaternion = filteredQuat.clone();
         } else {
             const conf = m.confidence || 1.0;
-            const filteredPos = this.posFilter ? this.posFilter.update(correctedPosition, dt, conf) : correctedPosition;
-            const filteredQuat = this.quatFilter ? this.quatFilter.update(finalQuat, dt, conf) : finalQuat;
+            filteredPos = this.posFilter ? this.posFilter.update(correctedPosition, dt, conf) : correctedPosition;
+            filteredQuat = this.quatFilter ? this.quatFilter.update(finalQuat, dt, conf) : finalQuat;
             
             this._poseTargetPosition = filteredPos.clone();
             this._poseTargetQuaternion = filteredQuat.clone();
+        }
+
+        // Visualizza gli assi della posa marker così da confrontarli col pivot casetta
+        // Usiamo la posa filtrata così il debug visivo non scatta
+        if (this._markerPoseAxes) {
+            this._markerPoseAxes.visible = this._debugOverlayEnabled;
+            this._markerPoseAxes.position.copy(filteredPos);
+            this._markerPoseAxes.quaternion.copy(filteredQuat);
         }
 
         // Debug output: log full pose information for external inspection
