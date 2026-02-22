@@ -982,7 +982,7 @@ export class RestorationEngine {
     // ── Worker ───────────────────────────────────────────────────────────────
 
     _initWorker() {
-        this.worker = new Worker('workers/aruco-worker.js');
+        this.worker = new Worker('workers/aruco-worker.js?v=4');
         // allow dictionary selection via query string for GitHub Pages convenience
         let dict = this._dictionaryName || 'ARUCO';
         try {
