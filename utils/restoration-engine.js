@@ -819,7 +819,7 @@ export class RestorationEngine {
             // Apply a fixed FBX-up correction ONCE at model load time.
             // This keeps pivot/bbox computations consistent with the final visible orientation.
             object.quaternion.premultiply(new THREE.Quaternion().setFromEuler(
-                new THREE.Euler(Math.PI / 2, 0, 0, 'XYZ')
+                new THREE.Euler(Math.PI / 2, Math.PI, 0, 'XYZ')
             ));
             object.updateMatrixWorld(true);
 
