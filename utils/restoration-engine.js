@@ -374,11 +374,11 @@ export class RestorationEngine {
     _applyOffsets() {
         if (this.restoredModel) {
             const basePos = this.restoredModel.userData?.basePosition;
-            if (basePos) this.restoredModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z - this._modelZOffset);
+            if (basePos) this.restoredModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
         }
         if (this.destroyedModel) {
             const basePos = this.destroyedModel.userData?.basePosition;
-            if (basePos) this.destroyedModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z - this._modelZOffset);
+            if (basePos) this.destroyedModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
         }
     }
 
@@ -658,7 +658,7 @@ export class RestorationEngine {
         if (!(baseScale instanceof THREE.Vector3) || !(basePosition instanceof THREE.Vector3)) return;
 
         object.scale.copy(baseScale).multiplyScalar(this._modelScaleFactor);
-        object.position.set(basePosition.x + this._modelXOffset, basePosition.y + this._modelYOffset, basePosition.z - this._modelZOffset);
+        object.position.set(basePosition.x + this._modelXOffset, basePosition.y + this._modelYOffset, basePosition.z + this._modelZOffset);
         object.updateMatrixWorld(true);
     }
 
@@ -688,14 +688,25 @@ export class RestorationEngine {
         const centre = new THREE.Vector3();
         box2.getCenter(centre);
         
-        // Sposta l'oggetto in modo che il centro (X, Y) sia a 0, e la base (max.z) sia a 0
-        // Nota: l'asse UP della casetta è -Z a causa della rotazione applicata al caricamento.
-        object.position.x -= centre.x;
-        object.position.y -= centre.y;
-        object.position.z -= box2.max.z;
+        // Sposta l'oggetto in modo che il centro (X, Z) sia a 0, e la base (min.y) sia a 0
+        // Nota: la posizione dell'oggetto è relativa al suo parent (modelRoot).
+        // Sottraendo box2.min.y, stiamo sollevando l'oggetto in modo che il suo punto più basso
+        // coincida con y=0 del parent.
+        
+        // Convertiamo il centro globale in coordinate locali dell'oggetto
+        const localCenter = object.worldToLocal(centre.clone());
+        const localMinY = object.worldToLocal(new THREE.Vector3(0, box2.min.y, 0)).y;
+
+        object.position.x -= localCenter.x * object.scale.x;
+        object.position.z -= localCenter.z * object.scale.z;
+        object.position.y -= localMinY * object.scale.y;
         
         // Aggiorna la matrice per assicurarsi che il pivot sia corretto
         object.updateMatrixWorld(true);
+        
+        // Forza l'aggiornamento del bounding box dopo lo spostamento
+        const finalBox = new THREE.Box3().setFromObject(object);
+        this.log(`Model centered. New min.y: ${finalBox.min.y.toFixed(4)}`);
     }
 
     /** Compute model bounding box from whichever model is loaded. */
