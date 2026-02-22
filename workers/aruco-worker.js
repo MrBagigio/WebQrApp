@@ -177,7 +177,7 @@ function processFrame(msg) {
 
         // Normalize corner order (top-left, top-right, bottom-right, bottom-left)
         // before pose estimation. Inconsistent order causes center/orientation drift.
-        m.corners = normalizeMarkerCorners(m.corners);
+        // m.corners = normalizeMarkerCorners(m.corners); // REMOVED: This destroys the marker's physical rotation!
 
         // Corners in overlay (full-resolution) space for drawing
         const corners = m.corners.map(c => [c.x * scaleX, c.y * scaleY]);
