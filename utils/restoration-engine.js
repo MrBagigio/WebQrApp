@@ -80,8 +80,8 @@ export class RestorationEngine {
         this._lastRenderTime = 0;
 
         this._debugOverlayEnabled = true;
-        this._centerLockStrength = 0.85; // Aumentato per incollare meglio la casetta al centro
-        this._centerLockMaxMeters = 0.15; // Permette correzioni più ampie
+        this._centerLockStrength = 0.85; // Aumentato per ancorare più saldamente il modello al centro del marker
+        this._centerLockMaxMeters = 0.15; // Aumentato per permettere correzioni più ampie
 
         // First-pose flag: snap to first detected pose, then smooth after
         this._hasFirstPose = false;
