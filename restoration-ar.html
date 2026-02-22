@@ -139,7 +139,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=4';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=5';
 
         async function main() {
             const engine = new RestorationEngine();
@@ -210,6 +210,9 @@
         }
         const debugToggle = document.getElementById('debug-overlay-toggle');
         if (debugToggle) {
+            if (window.engine && typeof window.engine.setDebugOverlayEnabled === 'function') {
+                window.engine.setDebugOverlayEnabled(debugToggle.checked);
+            }
             debugToggle.addEventListener('change', (e) => {
                 if (window.engine && typeof window.engine.setDebugOverlayEnabled === 'function') {
                     window.engine.setDebugOverlayEnabled(e.target.checked);

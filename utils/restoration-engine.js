@@ -49,6 +49,8 @@ export class RestorationEngine {
         this._markerPoseAxes = null;
         this._housePivotHelper = null;
         this._modelYOffset = 0; // meters, manual vertical tuning from UI
+        this._modelScaleFactor = 1;
+        this._targetModelSize = this.houseSizeMM / 1000;
         this._validMarkerIds = new Set([1]);
         this._singleMarkerMode = true;
         this._singleMarkerOffsetTemplate = null;
@@ -326,7 +328,8 @@ export class RestorationEngine {
 
     setHouseSizeMM(mm) {
         this.houseSizeMM = Math.max(10, Number(mm) || 200);
-        const target = this.houseSizeMM / 1000;
+        this._targetModelSize = this.houseSizeMM / 1000;
+        const target = this._targetModelSize * this._modelScaleFactor;
         if (this.restoredModel) {
             this._scaleModel(this.restoredModel, target);
             this.restoredModel.position.y = this._modelYOffset;
@@ -337,7 +340,7 @@ export class RestorationEngine {
         }
         this._recomputeBBox();
         this._repositionMarkerHelpers();
-        this.log(`Casa: ${this.houseSizeMM} mm → ${target.toFixed(3)} m`);
+        this.log(`Casa: ${this.houseSizeMM} mm → ${(this._targetModelSize).toFixed(3)} m (scale ${this._modelScaleFactor.toFixed(2)}x)`);
     }
 
     setModelYOffset(meters) {
@@ -353,6 +356,8 @@ export class RestorationEngine {
 
     setDebugOverlayEnabled(enable) {
         this._debugOverlayEnabled = !!enable;
+        if (this._housePivotHelper) this._housePivotHelper.visible = this._debugOverlayEnabled;
+        if (this._markerPoseAxes) this._markerPoseAxes.visible = this._debugOverlayEnabled && this.isTracking;
         this.log('Debug overlay ' + (this._debugOverlayEnabled ? 'enabled' : 'disabled'));
     }
 
@@ -599,15 +604,22 @@ export class RestorationEngine {
     // ── Model scaling (safe for repeated calls) ──────────────────────────────
 
     setModelScale(scaleFactor) {
-        this._modelScaleFactor = scaleFactor;
+        const parsed = Number(scaleFactor);
+        if (!Number.isFinite(parsed)) return;
+        this._modelScaleFactor = Math.max(0.1, Math.min(3.0, parsed));
+        const baseSize = Number.isFinite(this._targetModelSize) && this._targetModelSize > 0
+            ? this._targetModelSize
+            : (this.houseSizeMM / 1000);
+        const targetSize = baseSize * this._modelScaleFactor;
         if (this.restoredModel) {
-            this._scaleModel(this.restoredModel, this._targetModelSize * this._modelScaleFactor);
+            this._scaleModel(this.restoredModel, targetSize);
             this.restoredModel.position.y = this._modelYOffset;
         }
         if (this.destroyedModel) {
-            this._scaleModel(this.destroyedModel, this._targetModelSize * this._modelScaleFactor);
+            this._scaleModel(this.destroyedModel, targetSize);
             this.destroyedModel.position.y = this._modelYOffset;
         }
+        this.log(`Model scale: ${this._modelScaleFactor.toFixed(2)}x`);
     }
 
     /**
@@ -615,6 +627,7 @@ export class RestorationEngine {
      * Resets scale/position first so repeated calls are idempotent.
      */
     _scaleModel(object, targetMeters) {
+        if (!object || !Number.isFinite(targetMeters) || targetMeters <= 0) return;
         // Reset to original transform before re-computing
         object.scale.set(1, 1, 1);
         object.position.set(0, 0, 0);
@@ -841,8 +854,8 @@ export class RestorationEngine {
     _loadModels() {
         const loader = new THREE.FBXLoader();
         // global multiplier from UI slider (1.0 default)
-        this._modelScaleFactor = this._modelScaleFactor || 1.0;
-        this._targetModelSize = (this.houseSizeMM / 1000);
+        this._modelScaleFactor = Number.isFinite(this._modelScaleFactor) ? this._modelScaleFactor : 1.0;
+        this._targetModelSize = this.houseSizeMM / 1000;
         const targetSize = this._targetModelSize * this._modelScaleFactor;
 
         // Helper: shared material + scaling + bbox recompute
@@ -999,7 +1012,7 @@ export class RestorationEngine {
     // ── Worker ───────────────────────────────────────────────────────────────
 
     _initWorker() {
-        this.worker = new Worker('workers/aruco-worker.js?v=4');
+        this.worker = new Worker('workers/aruco-worker.js?v=5');
         // allow dictionary selection via query string for GitHub Pages convenience
         let dict = this._dictionaryName || 'ARUCO';
         try {
@@ -1228,12 +1241,6 @@ export class RestorationEngine {
                 statusEl.style.display = 'none';
             }
         }
-    }
-
-    setDebugOverlayEnabled(enabled) {
-        this._debugOverlayEnabled = enabled;
-        if (this._housePivotHelper) this._housePivotHelper.visible = enabled;
-        if (this._markerPoseAxes && !this.isTracking) this._markerPoseAxes.visible = false;
     }
 
     // ── Overlay drawing ──────────────────────────────────────────────────────
