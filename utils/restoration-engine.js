@@ -49,6 +49,8 @@ export class RestorationEngine {
         this._markerPoseAxes = null;
         this._housePivotHelper = null;
         this._modelYOffset = 0; // meters, manual vertical tuning from UI
+        this._modelXOffset = 0;
+        this._modelZOffset = 0;
         this._modelScaleFactor = 1;
         this._targetModelSize = this.houseSizeMM / 1000;
         this._validMarkerIds = new Set([1]);
@@ -353,15 +355,31 @@ export class RestorationEngine {
 
     setModelYOffset(meters) {
         this._modelYOffset = Number.isFinite(Number(meters)) ? Number(meters) : this._modelYOffset;
+        this._applyOffsets();
+        this.log(`Model Y offset: ${(this._modelYOffset * 100).toFixed(1)} cm`);
+    }
+
+    setModelXOffset(meters) {
+        this._modelXOffset = Number.isFinite(Number(meters)) ? Number(meters) : this._modelXOffset;
+        this._applyOffsets();
+        this.log(`Model X offset: ${(this._modelXOffset * 100).toFixed(1)} cm`);
+    }
+
+    setModelZOffset(meters) {
+        this._modelZOffset = Number.isFinite(Number(meters)) ? Number(meters) : this._modelZOffset;
+        this._applyOffsets();
+        this.log(`Model Z offset: ${(this._modelZOffset * 100).toFixed(1)} cm`);
+    }
+
+    _applyOffsets() {
         if (this.restoredModel) {
-            const baseY = this.restoredModel.userData?.basePosition?.y || 0;
-            this.restoredModel.position.y = baseY + this._modelYOffset;
+            const basePos = this.restoredModel.userData?.basePosition;
+            if (basePos) this.restoredModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
         }
         if (this.destroyedModel) {
-            const baseY = this.destroyedModel.userData?.basePosition?.y || 0;
-            this.destroyedModel.position.y = baseY + this._modelYOffset;
+            const basePos = this.destroyedModel.userData?.basePosition;
+            if (basePos) this.destroyedModel.position.set(basePos.x + this._modelXOffset, basePos.y + this._modelYOffset, basePos.z + this._modelZOffset);
         }
-        this.log(`Model Y offset: ${(this._modelYOffset * 100).toFixed(1)} cm`);
     }
 
     updateDetectionFps(fps) {
@@ -640,7 +658,7 @@ export class RestorationEngine {
         if (!(baseScale instanceof THREE.Vector3) || !(basePosition instanceof THREE.Vector3)) return;
 
         object.scale.copy(baseScale).multiplyScalar(this._modelScaleFactor);
-        object.position.set(basePosition.x, basePosition.y + this._modelYOffset, basePosition.z);
+        object.position.set(basePosition.x + this._modelXOffset, basePosition.y + this._modelYOffset, basePosition.z + this._modelZOffset);
         object.updateMatrixWorld(true);
     }
 
@@ -664,11 +682,11 @@ export class RestorationEngine {
             object.scale.set(s, s, s);
         }
 
-        // Re-centre: pivot at bottom-centre of the actual footprint (base area),
-        // not only bbox center. This avoids side offsets for asymmetrical meshes.
+        // Re-centre: pivot at bottom-centre of the bounding box
         object.updateMatrixWorld(true);
         const box2 = new THREE.Box3().setFromObject(object);
-        const centre = this._computeModelFootprintCenter(object, box2);
+        const centre = new THREE.Vector3();
+        box2.getCenter(centre);
         
         // Sposta l'oggetto in modo che il centro (X, Z) sia a 0, e la base (min.y) sia a 0
         object.position.x -= centre.x;
@@ -677,49 +695,6 @@ export class RestorationEngine {
         
         // Aggiorna la matrice per assicurarsi che il pivot sia corretto
         object.updateMatrixWorld(true);
-    }
-
-    _computeModelFootprintCenter(object, bbox) {
-        const fallback = new THREE.Vector3();
-        if (!object || !bbox) return fallback;
-        bbox.getCenter(fallback);
-
-        const minY = bbox.min.y;
-        const maxY = bbox.max.y;
-        const height = Math.max(1e-6, maxY - minY);
-        const yThreshold = minY + height * 0.12; // bottom 12% of mesh height
-
-        const invObject = new THREE.Matrix4().copy(object.matrixWorld).invert();
-        const worldPos = new THREE.Vector3();
-        const localPos = new THREE.Vector3();
-
-        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-        let count = 0;
-
-        object.traverse((node) => {
-            if (!node.isMesh || !node.geometry || !node.geometry.attributes?.position) return;
-
-            const attr = node.geometry.attributes.position;
-            const step = Math.max(1, Math.floor(attr.count / 4000));
-
-            for (let i = 0; i < attr.count; i += step) {
-                worldPos.fromBufferAttribute(attr, i).applyMatrix4(node.matrixWorld);
-                if (worldPos.y > yThreshold) continue;
-
-                localPos.copy(worldPos).applyMatrix4(invObject);
-                if (localPos.x < minX) minX = localPos.x;
-                if (localPos.x > maxX) maxX = localPos.x;
-                if (localPos.z < minZ) minZ = localPos.z;
-                if (localPos.z > maxZ) maxZ = localPos.z;
-                count++;
-            }
-        });
-
-        if (count < 10 || !Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
-            return fallback;
-        }
-
-        return new THREE.Vector3((minX + maxX) * 0.5, 0, (minZ + maxZ) * 0.5);
     }
 
     /** Compute model bounding box from whichever model is loaded. */
