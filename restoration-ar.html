@@ -128,7 +128,8 @@
     </script>
 
     <script type="module">
-        import { RestorationEngine } from './utils/restoration-engine.js?v=3';
+        // cache-bust by appending version parameter (update when code changes)
+        import { RestorationEngine } from './utils/restoration-engine.js?v=2';
 
         async function main() {
             const engine = new RestorationEngine();
