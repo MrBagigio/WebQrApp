@@ -611,10 +611,6 @@ export class RestorationEngine {
         object.position.x -= centre.x;
         object.position.z -= centre.z;
         object.position.y -= box2.min.y;
-        
-        // Aggiungi un BoxHelper per visualizzare il bounding box
-        const boxHelper = new THREE.BoxHelper(object, 0xffff00);
-        object.add(boxHelper);
     }
 
     /** Compute model bounding box from whichever model is loaded. */
@@ -1091,18 +1087,21 @@ export class RestorationEngine {
         this._lastTrackingTime = now;
         this._framesWithoutDetection = 0;
 
-        // single marker only, ignore orientation entirely
+        // single marker only
         const m = poseful[0];
-        const { position } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
+        const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
+
+        // Upright correction: rotate the house 90° around the marker's local X axis
+        // so it stands perpendicular to the flat marker surface.
+        // We MULTIPLY (not replace) so that the house tracks the full 3D pose.
+        const uprightFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0, 'XYZ'));
+        const finalQuat = quaternion.clone().multiply(uprightFix);
 
         this.modelGroup.position.copy(position);
-        
-        // Applica una rotazione fissa per raddrizzare la casa rispetto al marker
-        // Ruota di 90 gradi sull'asse X per farla stare in piedi
-        this.modelGroup.quaternion.setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0, 'XYZ'));
-        
+        this.modelGroup.quaternion.copy(finalQuat);
+
         this._poseTargetPosition = position.clone();
-        this._poseTargetQuaternion = this.modelGroup.quaternion.clone();
+        this._poseTargetQuaternion = finalQuat.clone();
         // Debug output: log full pose information for external inspection
         try {
             const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';
