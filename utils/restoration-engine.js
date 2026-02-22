@@ -329,14 +329,18 @@ export class RestorationEngine {
     setHouseSizeMM(mm) {
         this.houseSizeMM = Math.max(10, Number(mm) || 200);
         this._targetModelSize = this.houseSizeMM / 1000;
-        const target = this._targetModelSize * this._modelScaleFactor;
+        const target = this._targetModelSize;
         if (this.restoredModel) {
             this._scaleModel(this.restoredModel, target);
-            this.restoredModel.position.y = this._modelYOffset;
+            this.restoredModel.userData.baseScale = this.restoredModel.scale.clone();
+            this.restoredModel.userData.basePosition = this.restoredModel.position.clone();
+            this._applyModelScaleTransform(this.restoredModel);
         }
         if (this.destroyedModel) {
             this._scaleModel(this.destroyedModel, target);
-            this.destroyedModel.position.y = this._modelYOffset;
+            this.destroyedModel.userData.baseScale = this.destroyedModel.scale.clone();
+            this.destroyedModel.userData.basePosition = this.destroyedModel.position.clone();
+            this._applyModelScaleTransform(this.destroyedModel);
         }
         this._recomputeBBox();
         this._repositionMarkerHelpers();
@@ -345,8 +349,14 @@ export class RestorationEngine {
 
     setModelYOffset(meters) {
         this._modelYOffset = Number.isFinite(Number(meters)) ? Number(meters) : this._modelYOffset;
-        if (this.restoredModel) this.restoredModel.position.y = this._modelYOffset;
-        if (this.destroyedModel) this.destroyedModel.position.y = this._modelYOffset;
+        if (this.restoredModel) {
+            const baseY = this.restoredModel.userData?.basePosition?.y || 0;
+            this.restoredModel.position.y = baseY + this._modelYOffset;
+        }
+        if (this.destroyedModel) {
+            const baseY = this.destroyedModel.userData?.basePosition?.y || 0;
+            this.destroyedModel.position.y = baseY + this._modelYOffset;
+        }
         this.log(`Model Y offset: ${(this._modelYOffset * 100).toFixed(1)} cm`);
     }
 
@@ -607,19 +617,24 @@ export class RestorationEngine {
         const parsed = Number(scaleFactor);
         if (!Number.isFinite(parsed)) return;
         this._modelScaleFactor = Math.max(0.1, Math.min(3.0, parsed));
-        const baseSize = Number.isFinite(this._targetModelSize) && this._targetModelSize > 0
-            ? this._targetModelSize
-            : (this.houseSizeMM / 1000);
-        const targetSize = baseSize * this._modelScaleFactor;
         if (this.restoredModel) {
-            this._scaleModel(this.restoredModel, targetSize);
-            this.restoredModel.position.y = this._modelYOffset;
+            this._applyModelScaleTransform(this.restoredModel);
         }
         if (this.destroyedModel) {
-            this._scaleModel(this.destroyedModel, targetSize);
-            this.destroyedModel.position.y = this._modelYOffset;
+            this._applyModelScaleTransform(this.destroyedModel);
         }
         this.log(`Model scale: ${this._modelScaleFactor.toFixed(2)}x`);
+    }
+
+    _applyModelScaleTransform(object) {
+        if (!object) return;
+        const baseScale = object.userData?.baseScale;
+        const basePosition = object.userData?.basePosition;
+        if (!(baseScale instanceof THREE.Vector3) || !(basePosition instanceof THREE.Vector3)) return;
+
+        object.scale.copy(baseScale).multiplyScalar(this._modelScaleFactor);
+        object.position.set(basePosition.x, basePosition.y + this._modelYOffset, basePosition.z);
+        object.updateMatrixWorld(true);
     }
 
     /**
@@ -856,7 +871,7 @@ export class RestorationEngine {
         // global multiplier from UI slider (1.0 default)
         this._modelScaleFactor = Number.isFinite(this._modelScaleFactor) ? this._modelScaleFactor : 1.0;
         this._targetModelSize = this.houseSizeMM / 1000;
-        const targetSize = this._targetModelSize * this._modelScaleFactor;
+        const targetSize = this._targetModelSize;
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
@@ -868,8 +883,9 @@ export class RestorationEngine {
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
-            // manual UI offset: default 0 (centered on marker), user-adjustable at runtime
-            object.position.y = this._modelYOffset;
+            object.userData.baseScale = object.scale.clone();
+            object.userData.basePosition = object.position.clone();
+            this._applyModelScaleTransform(object);
             object.traverse(child => {
                 if (child.isMesh) {
                     child.castShadow = true;
