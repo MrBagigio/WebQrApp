@@ -1201,9 +1201,20 @@ export class RestorationEngine {
         if (!this.isTracking || !this.modelGroup || !this.modelGroup.visible) return;
         if (!this._poseTargetPosition || !this._poseTargetQuaternion) return;
 
-        // In single marker mode, we just snap to the target pose to avoid trailing
-        this.modelGroup.position.copy(this._poseTargetPosition);
-        this.modelGroup.quaternion.copy(this._poseTargetQuaternion);
+        const dt = (now - (this._lastRenderTime || now)) / 1000;
+        this._lastRenderTime = now;
+
+        // Predict position between frames if filter supports it
+        if (this.posFilter && typeof this.posFilter.predict === 'function') {
+            const predictedPos = this.posFilter.predict(dt);
+            if (predictedPos) {
+                this._poseTargetPosition.copy(predictedPos);
+            }
+        }
+
+        // Smoothly interpolate render transform towards target
+        this.modelGroup.position.lerp(this._poseTargetPosition, 0.8);
+        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, 0.8);
     }
 
     /**
@@ -1232,11 +1243,26 @@ export class RestorationEngine {
         // Model up-axis correction is already baked during FBX loading.
         const finalQuat = quaternion.clone();
 
-        this.modelGroup.position.copy(correctedPosition);
-        this.modelGroup.quaternion.copy(finalQuat);
+        const dt = (now - (this._lastPoseMeasurementTime || now)) / 1000;
+        this._lastPoseMeasurementTime = now;
 
-        this._poseTargetPosition = correctedPosition.clone();
-        this._poseTargetQuaternion = finalQuat.clone();
+        if (!this._hasFirstPose) {
+            if (this.posFilter) this.posFilter.reset(correctedPosition);
+            if (this.quatFilter) this.quatFilter.reset(finalQuat);
+            this._hasFirstPose = true;
+            this.modelGroup.position.copy(correctedPosition);
+            this.modelGroup.quaternion.copy(finalQuat);
+            this._poseTargetPosition = correctedPosition.clone();
+            this._poseTargetQuaternion = finalQuat.clone();
+        } else {
+            const conf = m.confidence || 1.0;
+            const filteredPos = this.posFilter ? this.posFilter.update(correctedPosition, dt, conf) : correctedPosition;
+            const filteredQuat = this.quatFilter ? this.quatFilter.update(finalQuat, dt, conf) : finalQuat;
+            
+            this._poseTargetPosition = filteredPos.clone();
+            this._poseTargetQuaternion = filteredQuat.clone();
+        }
+
         // Debug output: log full pose information for external inspection
         try {
             const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';

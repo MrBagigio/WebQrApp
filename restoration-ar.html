@@ -105,6 +105,7 @@
         onerror="window.log && window.log('Errore Three.js CDN','error')"></script>
     <script src="vendor/fflate.min.js"
         onerror="window.log && window.log('Errore fflate locale (vendor/fflate.min.js)','error')"></script>
+    <script src="utils/pose-filter.js"></script>
     <script>
 
     </script>
@@ -143,7 +144,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=12';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=13';
 
         async function main() {
             const engine = new RestorationEngine();
