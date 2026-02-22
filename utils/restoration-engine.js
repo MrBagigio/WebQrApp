@@ -46,6 +46,8 @@ export class RestorationEngine {
         this._modelBBox = null;
         this._markerHelpers = {};
         this._showMarkerHelpers = false;
+        this._markerPoseAxes = null;
+        this._housePivotHelper = null;
         this._validMarkerIds = new Set([1]);
         this._singleMarkerMode = true;
         this._singleMarkerOffsetTemplate = null;
@@ -774,9 +776,21 @@ export class RestorationEngine {
         this._modelRoot = new THREE.Group();
         this.modelGroup.add(this._modelRoot);
 
-        // Aggiungi gli assi (AxesHelper) alla casetta per debug
-        const axesHelper = new THREE.AxesHelper(0.2); // 20cm di lunghezza
-        this._modelRoot.add(axesHelper);
+        // Debug helper: pivot della casetta (origine modelGroup)
+        this._housePivotHelper = new THREE.Group();
+        const houseAxes = new THREE.AxesHelper(0.12);
+        const housePivotDot = new THREE.Mesh(
+            new THREE.SphereGeometry(0.008, 16, 16),
+            new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x222222, metalness: 0.1, roughness: 0.6 })
+        );
+        this._housePivotHelper.add(houseAxes);
+        this._housePivotHelper.add(housePivotDot);
+        this.modelGroup.add(this._housePivotHelper);
+
+        // Debug helper: assi della posa marker rilevata (prima della correzione upright)
+        this._markerPoseAxes = new THREE.AxesHelper(0.12);
+        this._markerPoseAxes.visible = false;
+        this.scene.add(this._markerPoseAxes);
 
         // Shadow ground plane
         const shadowPlane = new THREE.Mesh(
@@ -1091,6 +1105,13 @@ export class RestorationEngine {
         const m = poseful[0];
         const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
 
+        // Visualizza gli assi della posa marker così da confrontarli col pivot casetta
+        if (this._markerPoseAxes) {
+            this._markerPoseAxes.visible = true;
+            this._markerPoseAxes.position.copy(position);
+            this._markerPoseAxes.quaternion.copy(quaternion);
+        }
+
         // Upright correction: rotate the house 90° around the marker's local X axis
         // so it stands perpendicular to the flat marker surface.
         // We MULTIPLY (not replace) so that the house tracks the full 3D pose.
@@ -1152,6 +1173,7 @@ export class RestorationEngine {
 
             this.isTracking = false;
             if (this.modelGroup) this.modelGroup.visible = false;
+            if (this._markerPoseAxes) this._markerPoseAxes.visible = false;
             this._hasFirstPose = false;
             if (statusEl) {
                 statusEl.textContent = 'RICERCA TARGET...';
