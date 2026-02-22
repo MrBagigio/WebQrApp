@@ -80,8 +80,8 @@ export class RestorationEngine {
         this._lastRenderTime = 0;
 
         this._debugOverlayEnabled = true;
-        this._centerLockStrength = 0.35;
-        this._centerLockMaxMeters = 0.08;
+        this._centerLockStrength = 0.85; // Aumentato per incollare meglio la casetta al centro
+        this._centerLockMaxMeters = 0.15; // Permette correzioni più ampie
 
         // First-pose flag: snap to first detected pose, then smooth after
         this._hasFirstPose = false;
@@ -1146,9 +1146,37 @@ export class RestorationEngine {
     _handleTrackingResult(data) {
         const statusEl = document.getElementById('tracking-status');
         const now = performance.now();
+
+        const dedupeById = (markers = []) => {
+            const byId = new Map();
+            for (const marker of markers) {
+                if (!marker) continue;
+                const id = Number(marker.id);
+                if (!Number.isFinite(id)) continue;
+                const existing = byId.get(id);
+                if (!existing) {
+                    byId.set(id, marker);
+                    continue;
+                }
+
+                const markerConf = Number.isFinite(marker.confidence) ? marker.confidence : -1;
+                const existingConf = Number.isFinite(existing.confidence) ? existing.confidence : -1;
+                if (markerConf > existingConf) {
+                    byId.set(id, marker);
+                    continue;
+                }
+
+                if (markerConf === existingConf) {
+                    const markerPeri = this._markerPerimeter(marker.corners || []);
+                    const existingPeri = this._markerPerimeter(existing.corners || []);
+                    if (markerPeri > existingPeri) byId.set(id, marker);
+                }
+            }
+            return Array.from(byId.values());
+        };
         
         // Use all detected markers for debug/overlay, but filter for pose estimation
-        const rawMarkers = data.markers || [];
+        const rawMarkers = dedupeById(data.markers || []);
         const hasIdFilter = this._validMarkerIds instanceof Set && this._validMarkerIds.size > 0;
         const validMarkers = hasIdFilter
             ? rawMarkers.filter(m => this._validMarkerIds.has(Number(m.id)))
