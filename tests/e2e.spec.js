@@ -10,12 +10,30 @@ test.describe('WebQrApp - smoke suite', () => {
         await expect(page.locator('#hint')).toHaveCount(1);
     });
 
-    test('Restoration AR page boots with minimal UI', async ({ page }) => {
+    test('Restoration AR page boots with minimal UI and logs pose', async ({ page }) => {
         const errors = [];
+        let poseLogs = 0;
         page.on('pageerror', (e) => errors.push(String(e)));
+        page.on('console', msg => {
+            const text = msg.text();
+            if (text.startsWith('pose')) poseLogs++;
+        });
         await page.goto(URL + '/restoration-ar.html?single=1&dict=AUTO');
         // slider should be present (restoration control)
         await expect(page.locator('#restoration-range')).toHaveCount(1);
+        // wait until engine object exists
+        await page.waitForFunction(() => !!window.engine, null, { timeout: 3000 });
+        // manually trigger a fake pose so logging occurs even without camera
+        await page.evaluate(() => {
+            if (window.engine && typeof window.engine._applyTrackedPose === 'function') {
+                const dummy = { rvec:[0,0,0], tvec:[0,0,0], source:'posit' };
+                const status = document.createElement('div');
+                window.engine._applyTrackedPose([dummy], status, performance.now());
+            }
+        });
+        // allow logs to propagate
+        await page.waitForTimeout(200);
+        expect(poseLogs).toBeGreaterThan(0);
         expect(errors).toEqual([]);
     });
 

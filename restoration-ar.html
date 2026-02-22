@@ -461,6 +461,7 @@
 
         async function main() {
             const engine = new RestorationEngine();
+            window.engine = engine; // expose for debugging/tests
             engine._validMarkerIds = new Set([1]);
             engine._singleMarkerMode = true;
             engine.markerSizeMM = 150;

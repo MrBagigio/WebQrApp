@@ -188,6 +188,20 @@ export class RestorationEngine {
         this._rafId = null;
     }
 
+    // ── Pose helpers ───────────────────────────────────────────────────────
+    /**
+     * Return the most recently applied pose measurement (in world coords).
+     * Useful for logging or exporting from browser console.
+     */
+    getLastPose() {
+        return this._lastPoseInfo ? {
+            pos: this._lastPoseInfo.position.toArray(),
+            quat: this._lastPoseInfo.quaternion.toArray(),
+            error: this._lastPoseInfo.error,
+            confidence: this._lastPoseInfo.confidence
+        } : null;
+    }
+
     // ── Logging ──────────────────────────────────────────────────────────────
 
     log(msg, type = 'info') {
@@ -1187,8 +1201,7 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
-            // Some FBX exports use Z-up; rotate to Y-up so house base lies flat.
-            object.rotateX(-Math.PI/2);
+            // No automatic rotation; assume FBX is already correctly oriented.
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
@@ -1433,9 +1446,11 @@ export class RestorationEngine {
 
         const poseful = validMarkers.filter(m => m.rvec && m.tvec);
         if (poseful.length > 0) {
+            console.log('detected', poseful.length, 'valid markers');
             this._applyTrackedPose(poseful, statusEl, now);
             return;
         }
+        console.log('tracking lost');
         this._handleTrackingLost(statusEl, now);
     }
 
@@ -1479,10 +1494,18 @@ export class RestorationEngine {
         this.modelGroup.quaternion.set(0, 0, 0, 1);
         this._poseTargetPosition = position.clone();
         this._poseTargetQuaternion = new THREE.Quaternion();
+        // Debug output: log full pose information for external inspection
+        try {
+            const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';
+            const conf = (m && typeof m.confidence !== 'undefined') ? m.confidence.toFixed(3) : 'n/a';
+            console.log('pose', position.toArray().map(n=>n.toFixed(3)), 'quat',[0,0,0,1], 'err', err, 'conf', conf);
+        } catch (_e) {}
 
 
         this.isTracking = true;
         this.modelGroup.visible = true;
+        // save last pose for external query
+        this._lastPoseInfo = { position: position.clone(), quaternion: new THREE.Quaternion(0,0,0,1), error: (m && m.poseError) || null, confidence: (m && m.confidence) || null };
 
         // Update marker helpers
         for (const hid in this._markerHelpers) {
