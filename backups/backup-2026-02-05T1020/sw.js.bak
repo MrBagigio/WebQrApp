@@ -1,0 +1,53 @@
+const VERSION = '14.0.0-ZENITH';
+const CACHE_NAME = `expear-pro-${VERSION}`;
+
+const ASSETS_TO_CACHE = [
+    './',
+    './index.html',
+    './styles.css',
+    './script.js',
+    './i18n.json',
+    './manifest.json',
+    './assets/targets.mind',
+    'https://aframe.io/releases/1.4.2/aframe.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js',
+    'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js',
+    'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap',
+    'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js'
+];
+
+self.addEventListener('install', (event) => {
+    self.skipWaiting();
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+    );
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then((keys) => Promise.all(
+            keys.map((key) => {
+                if (key !== CACHE_NAME) return caches.delete(key);
+            })
+        ))
+    );
+});
+
+// Stale-While-Revalidate Strategy
+self.addEventListener('fetch', (event) => {
+    if (event.request.method !== 'GET') return;
+
+    event.respondWith(
+        caches.open(CACHE_NAME).then((cache) => {
+            return cache.match(event.request).then((cachedResponse) => {
+                const fetchedResponse = fetch(event.request).then((networkResponse) => {
+                    cache.put(event.request, networkResponse.clone());
+                    return networkResponse;
+                });
+
+                return cachedResponse || fetchedResponse;
+            });
+        })
+    );
+});

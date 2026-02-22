@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Printable ArUco Markers - ExpeAR Pro</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; color:#111 }
+    .sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 1000px; margin: auto }
+    .marker { width: 260px; height: 260px; border: 1px solid #ccc; display: flex; align-items:center; justify-content:center; background:#fff }
+    .controls { text-align:center; margin-bottom:12px }
+    button { padding:8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>Printable ArUco Markers</h1>
+  <div class="controls">
+    <label>Start ID: <input id="start-id" type="number" value="0" min="0"></label>
+    <label>Count: <input id="count" type="number" value="6" min="1" max="50"></label>
+    <button id="generate">Genera Foglio</button>
+    <button id="download-pdf">Download PDF</button>
+  </div>
+
+  <div id="sheet" class="sheet" aria-live="polite"></div>
+
+  <script async src="https://docs.opencv.org/4.5.2/opencv.js" onload="onOpenCvReady()"></script>
+  <script>
+    let dict = null;
+    function onOpenCvReady() {
+      if (cv && cv.aruco && cv.aruco.getPredefinedDictionary) {
+        dict = new cv.aruco.getPredefinedDictionary(cv.aruco.DICT_6X6_250);
+        console.log('OpenCV ArUco available');
+      } else {
+        console.warn('cv.aruco not available - will fallback to external generator links');
+      }
+    }
+
+    document.getElementById('generate').addEventListener('click', () => {
+      const start = Number(document.getElementById('start-id').value || 0);
+      const count = Number(document.getElementById('count').value || 6);
+      const sheet = document.getElementById('sheet');
+      sheet.innerHTML = '';
+      for (let i = 0; i < count; i++) {
+        const id = start + i;
+        const div = document.createElement('div');
+        div.className = 'marker';
+        if (dict && cv && cv.aruco && cv.aruco.drawMarker) {
+          const size = 240;
+          const mat = new cv.Mat(size, size, cv.CV_8UC1);
+          cv.aruco.drawMarker(dict, id % 250, size, mat, 1);
+          const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          const imgData = ctx.createImageData(size, size);
+          for (let p = 0; p < size * size; p++) {
+            const v = mat.data[p];
+            imgData.data[p*4] = v; imgData.data[p*4+1] = v; imgData.data[p*4+2] = v; imgData.data[p*4+3] = 255;
+          }
+          ctx.putImageData(imgData, 0,0);
+          mat.delete();
+          div.appendChild(canvas);
+        } else {
+          // fallback: use external generator image
+          const img = document.createElement('img');
+          img.src = `https://chev.me/arucogen/#?type=6x6&size=240&id=${id}`;
+          img.alt = `ArUco ${id}`;
+          img.width = 240; img.height = 240;
+          div.appendChild(img);
+        }
+        const caption = document.createElement('div'); caption.style.fontSize='12px'; caption.style.marginTop='6px'; caption.textContent = `ID ${id}`;
+        const wrapper = document.createElement('div'); wrapper.style.textAlign='center'; wrapper.appendChild(div); wrapper.appendChild(caption);
+        sheet.appendChild(wrapper);
+      }
+    });
+
+    document.getElementById('download-pdf').addEventListener('click', async () => {
+      const sheet = document.getElementById('sheet');
+      if (!sheet) return;
+      const canvases = sheet.querySelectorAll('canvas, img');
+      if (canvases.length === 0) return alert('Genera prima i marker');
+
+      // Lazy-load jsPDF if not present
+      if (!window.jspdf) {
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+          s.onload = res; s.onerror = rej; document.head.appendChild(s);
+        });
+      }
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const margin = 10; const perRow = 3; const cellW = (210 - margin*2) / perRow;
+      let x = margin, y = margin; let rowH = 0;
+
+      for (let i = 0; i < canvases.length; i++) {
+        const el = canvases[i];
+        let dataURL;
+        if (el.tagName.toLowerCase() === 'canvas') dataURL = el.toDataURL('image/png');
+        else {
+          const c = document.createElement('canvas'); c.width = el.naturalWidth || el.width; c.height = el.naturalHeight || el.height;
+          c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+          dataURL = c.toDataURL('image/png');
+        }
+        const props = pdf.getImageProperties(dataURL);
+        const imgW = cellW - 6; const imgH = (props.height/props.width) * imgW;
+        pdf.addImage(dataURL, 'PNG', x + 3, y + 3, imgW, imgH);
+        rowH = Math.max(rowH, imgH + 12);
+
+        x += cellW; if ((i+1) % perRow === 0) { x = margin; y += rowH; rowH = 0; }
+        if (y + 80 > 297 - margin) { pdf.addPage(); x = margin; y = margin; }
+      }
+
+      pdf.save('aruco_markers.pdf');
+    });
+  </script>
+</body>
+</html>

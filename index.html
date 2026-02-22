@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ExpeAR Pro - Mountain AR</title>
+
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#070707">
+  <meta name="description" content="Esperienza AR premium per l'esplorazione montana.">
+
+  <!-- Core Libraries (A-Frame bundles Three.js internally) -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <!-- Essential Zenith Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+
+  <!-- Performance: p5.js removed (replaced with lightweight CSS) -->
+
+  <link rel="stylesheet" href="styles.css">
+  <noscript>
+    <style>
+      #start-screen {
+        display: none;
+      }
+
+      .noscript-msg {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #070707;
+        z-index: 9999;
+        text-align: center;
+        padding: 20px;
+      }
+    </style>
+    <div class="noscript-msg">Attiva JavaScript per vivere l'esperienza ExpeAR Pro.</div>
+  </noscript>
+</head>
+
+<body>
+
+  <script>
+    // automatic redirect to QR demo (relative so GitHub Pages URL works)
+    window.location.replace('./mindar-app/index.html');
+  </script>
+
+  <!-- Mode selector overlay -->
+  <div id="mode-select" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;z-index:9999;gap:20px;">
+    <button id="choose-aruco" style="padding:12px 24px;font-size:1rem;">Modalità ArUco</button>
+    <button id="choose-qr" style="padding:12px 24px;font-size:1rem;">Modalità QR</button>
+  </div>
+  <script>
+    document.getElementById('choose-aruco').onclick = () => { document.getElementById('mode-select').style.display = 'none'; };
+    document.getElementById('choose-qr').onclick = () => { window.location.href = 'mindar-app/index.html'; };
+  </script>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="loading-overlay">
+    <div class="loader-content">
+      <div class="loader-logo">ExpeAR</div>
+      <div class="progress-container">
+        <div id="loader-bar" class="progress-bar"></div>
+      </div>
+      <div id="loader-status" class="loader-status">INIZIALIZZAZIONE SISTEMI...</div>
+    </div>
+  </div>
+
+  <!-- Start Screen -->
+  <section id="start-screen">
+    <h1 class="hero-title" data-i18n="ui.start_title">ExpeAR Pro</h1>
+    <p class="description" data-i18n="ui.start_subtitle">L'avanguardia dell'esplorazione aumentata.</p>
+
+    <div class="target-hint">
+      <div class="qr-preview-container">
+        <div class="qr-scan-line"></div>
+      </div>
+      <span class="hint-label" data-i18n="ui.status_scanning">RICERCA TARGET...</span>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;justify-content:center;flex-direction:column;">
+      <button id="start-btn" class="cta-button">INIZIA SPEDIZIONE</button>
+      <a href="aruco-poc.html" class="text-btn" style="margin-top:8px;color:var(--p-dim);">[DEV] Object Tracking POC</a>
+    </div>
+  </section>
+
+  <!-- Narrator Intro Overlay -->
+  <div id="narrator-intro" class="narrator-overlay hidden">
+    <div class="narrator-content">
+      <div class="narrator-badge" data-i18n="ui.narrator_badge">MESSAGGIO DAL CAMPO BASE</div>
+      <p id="narrator-text" data-i18n="ui.narrator_welcome">Benvenuto, Esploratore. Il sentiero attende i tuoi occhi.
+        Cerca i segni, svela la montagna.</p>
+
+      <div class="narrator-actions">
+        <button id="narrator-next" class="cta-button">RICEVUTO</button>
+        <button id="narrator-skip" class="text-btn" data-i18n="ui.narrator_skip">SALTA</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AR HUD -->
+  <div id="game-ui" class="hidden">
+    <div class="top-bar">
+      <div class="progress-pill">
+        <span id="poi-found">0</span>/2
+        <span id="explorer-rank" class="rank-badge">NOVIZIO</span>
+      </div>
+      <div class="top-actions">
+        <button id="contrast-toggle" class="icon-btn" title="Alto Contrasto">☀️</button>
+        <button id="journal-btn" class="icon-btn" title="Manuale Scoperte">📖</button>
+      </div>
+    </div>
+
+    <!-- Achievement Stack -->
+    <div id="achievement-system" class="achievement-container" aria-live="polite"></div>
+
+    <!-- Achievement Popup -->
+    <div id="achievement-popup" class="achievement-overlay hidden">
+      <div class="achievement-content">
+        <div class="glow-bg"></div>
+        <span class="ach-label" data-i18n="ui.ach_label">NUOVA SCOPERTA</span>
+        <h2 id="ach-title">Checkpoint Raggiunto</h2>
+        <div class="ach-divider"></div>
+        <span class="ach-footer" data-i18n="ui.ach_rank_up">GRADO AGGIORNATO</span>
+      </div>
+    </div>
+
+    <div id="reticle" class="reticle-container hidden">
+      <div class="qr-scan-line"></div>
+      <div class="reticle-corners">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+      </div>
+    </div>
+
+    <div class="status-indicator">
+      <span class="status-text" data-i18n="ui.status_scanning">RICERCA TARGET...</span>
+    </div>
+
+    <div id="info-sheet" class="info-sheet hidden">
+      <button id="close-card" class="close-btn">&times;</button>
+      <div class="sheet-content">
+        <div class="badge-category" id="card-cat">POI #1 • CHECKPOINT 1</div>
+        <h2 id="card-title">Descrizione Tappa</h2>
+        <p id="card-desc">...descrizione...</p>
+        <div class="card-actions">
+          <button id="share-discovery" class="secondary-btn">Condividi ↗</button>
+          <button id="collect-btn" class="cta-button small">Colleziona</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Discovery Manual (Journal) Overlay -->
+    <div id="journal-overlay" class="journal-overlay hidden">
+      <div class="journal-modal">
+        <div class="journal-header">
+          <h3 data-i18n="ui.journal_title">MANUALE SCOPERTE</h3>
+          <button id="close-journal" class="close-btn">&times;</button>
+        </div>
+        <div id="journal-list" class="journal-list">
+          <p class="empty-msg" data-i18n="ui.journal_empty">Nessuna scoperta ancora. Esplora il sentiero!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error Overlay -->
+  <div id="error-screen" class="error-overlay hidden">
+    <div class="error-content">
+      <div class="error-icon">⚠️</div>
+      <h2 id="error-title" data-i18n="ui.error_camera_title">Accesso Videocamera Negato</h2>
+      <p id="error-msg" data-i18n="ui.error_camera_msg">Per esplorare in AR, ExpeAR ha bisogno dei permessi della
+        fotocamera. Controlla le impostazioni del browser.</p>
+      <button id="retry-btn" onclick="location.reload()" class="cta-button">RIPROVA</button>
+    </div>
+  </div>
+
+  <!-- A-Scene -->
+  <a-scene mindar-image="imageTargetSrc: assets/targets.mind; uiScanning: no;" color-space="sRGB"
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: false; highRefreshRate: true; precision: mediump; logarithmicDepthBuffer: true"
+    vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false" cursor="fuse: false; rayOrigin: mouse;"
+      raycaster="far: 10000; objects: .clickable"></a-camera>
+
+    <!-- Professional Lighting -->
+    <a-light type="ambient" intensity="0.5"></a-light>
+    <a-light type="directional" position="1 2 1" intensity="1.2"></a-light>
+
+    <!-- Ambient Particles -->
+    <a-entity id="particles" position="0 0 -2">
+      <a-sphere position="0.5 1 0.5" radius="0.005" material="color: #FFF; opacity: 0.3; transparent: true"></a-sphere>
+      <a-sphere position="-0.8 -0.5 1" radius="0.005"
+        material="color: #FFF; opacity: 0.2; transparent: true"></a-sphere>
+      <a-sphere position="1.1 0.7 -0.5" radius="0.007"
+        material="color: #FFF; opacity: 0.4; transparent: true"></a-sphere>
+    </a-entity>
+
+    <!-- Dynamic AR Entities will be injected here by AREngine -->
+    <a-entity id="ar-targets-container"></a-entity>
+
+  </a-scene>
+
+  <script type="module" src="script.js"></script>
+</body>
+
+</html>

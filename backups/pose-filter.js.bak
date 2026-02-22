@@ -1,0 +1,97 @@
+// pose-filter.js
+// Lightweight adaptive quaternion filter using slerp towards measurements with an adaptive alpha
+(function(global){
+  class QuaternionFilter {
+    constructor({ timeConstant = 0.12 } = {}) {
+      this.timeConstant = timeConstant;
+      this.current = null; // THREE.Quaternion
+    }
+    reset(q) { this.current = q.clone ? q.clone() : new THREE.Quaternion(q.x, q.y, q.z, q.w); }
+    update(measured, dt, confidence = 1.0) {
+      if (!measured) return this.current;
+      if (!this.current) return (this.current = measured.clone());
+      const alpha = 1 - Math.exp(-dt / Math.max(1e-6, this.timeConstant));
+      const adj = Math.min(1, Math.max(0, alpha * confidence));
+      if (typeof THREE.Quaternion.slerp === 'function') {
+        THREE.Quaternion.slerp(this.current, measured, this.current, adj);
+      } else if (typeof this.current.slerp === 'function') {
+        this.current.slerp(measured, adj);
+      } else {
+        this.current.x += (measured.x - this.current.x) * adj;
+        this.current.y += (measured.y - this.current.y) * adj;
+        this.current.z += (measured.z - this.current.z) * adj;
+        this.current.w += (measured.w - this.current.w) * adj;
+        this.current.normalize();
+      }
+      return this.current;
+    }
+  }
+
+  class AdaptivePositionFilter {
+    constructor({ smoothing = 0.5 } = {}) { this.smoothing = smoothing; this.current = null; }
+    reset(v) { this.current = v.clone ? v.clone() : new THREE.Vector3(v.x,v.y,v.z); }
+    update(measured, dt, confidence=1.0) {
+      if (!measured) return this.current;
+      if (!this.current) return (this.current = measured.clone());
+      const alpha = 1 - Math.exp(-dt / Math.max(1e-6, this.smoothing));
+      const adj = alpha * confidence;
+      this.current.lerp(measured, adj);
+      return this.current;
+    }
+  }
+
+  class QuaternionEKF {
+    // Minimal multiplicative EKF for orientation only. State: quaternion q, bias b (3)
+    constructor({ qInit = null, P = null, Q = null, R = null } = {}) {
+      this.q = qInit ? qInit.clone() : new THREE.Quaternion();
+      this.b = new THREE.Vector3(0,0,0);
+      // Covariances as simple scalars/diagonal defaults
+      this.P = P || { ori: 0.01, bias: 0.0001 };
+      this.Q = Q || { gyro: 1e-4, bias: 1e-6 };
+      this.R = R || 0.01; // measurement noise
+    }
+
+    setState({ quat, bias }) { if (quat) this.q.copy(quat); if (bias) this.b.copy(bias); }
+
+    // Predict with angular rate (rad/s) - omega: THREE.Vector3
+    predict(omega, dt) {
+      // remove bias
+      const w = new THREE.Vector3().copy(omega).sub(this.b);
+      const wx = w.x, wy = w.y, wz = w.z;
+      // construct small rotation quaternion
+      const theta = Math.sqrt(wx*wx + wy*wy + wz*wz) * dt;
+      let dq = new THREE.Quaternion();
+      if (theta > 1e-6) {
+        const ax = wx/Math.sqrt(wx*wx+wy*wy+wz*wz);
+        const ay = wy/Math.sqrt(wx*wx+wy*wy+wz*wz);
+        const az = wz/Math.sqrt(wx*wx+wy*wy+wz*wz);
+        dq.setFromAxisAngle(new THREE.Vector3(ax,ay,az), theta);
+      } else {
+        dq.set(0,0,0,1);
+      }
+      this.q.multiply(dq).normalize();
+      // grow covariance slightly
+      this.P.ori += this.Q.gyro * dt;
+      this.P.bias += this.Q.bias * dt;
+    }
+
+    // Update with measured orientation (quaternion) using small-angle approx
+    update(measuredQuat) {
+      // compute error quaternion: qe = measured * q_conj
+      const qc = this.q.clone().conjugate();
+      const qe = measuredQuat.clone().multiply(qc);
+      // map to 3-vector (imag part) assuming small angle
+      const ex = qe.x, ey = qe.y, ez = qe.z;
+      // compute gain (simple scalar approx)
+      const K = this.P.ori / (this.P.ori + this.R);
+      // apply correction as small rotation
+      const corr = new THREE.Quaternion(ex*K, ey*K, ez*K, 1.0).normalize();
+      this.q.multiply(corr).normalize();
+      // reduce covariance
+      this.P.ori = (1 - K) * this.P.ori;
+    }
+  }
+
+  global.PoseFilters = { QuaternionFilter, AdaptivePositionFilter, QuaternionEKF };
+})(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof globalThis !== 'undefined' ? globalThis : {})));
+

@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ExpeAR Pro - Restauro Architettonico</title>
+
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#070707">
+
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* ===== AR Restoration UI ===== */
+
+        /* --- Video & Canvas layers --- */
+        #video-container {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background: #000;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            background: #000;
+        }
+
+        canvas#overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+        }
+
+        #three-container {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* --- Start overlay --- */
+        #start-overlay {
+            position: fixed;
+            inset: 0;
+            background: #000;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 40px;
+        }
+
+        #start-overlay h1 {
+            color: var(--p-gold);
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        #start-overlay p {
+            color: var(--p-dim);
+            font-size: 0.8rem;
+            margin-bottom: 30px;
+        }
+
+        .start-btn {
+            background: var(--p-gold);
+            color: #000;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-weight: 800;
+            font-size: 1rem;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            box-shadow: 0 0 30px var(--p-gold-glow);
+            margin-bottom: 20px;
+        }
+
+        #start-status {
+            color: #0f0;
+            font-size: 0.6rem;
+        }
+
+        /* --- Tracking status badge --- */
+        .status-badge {
+            position: fixed;
+            top: env(safe-area-inset-top, 8px);
+            left: 16px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 6px 14px;
+            border-radius: 100px;
+            border: 1px solid var(--glass-border);
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: var(--p-dim);
+            z-index: 2003;
+            pointer-events: none;
+            white-space: nowrap;
+            margin-top: 6px;
+            transition: color 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .status-badge.tracking {
+            border-color: var(--p-gold);
+            box-shadow: 0 0 12px var(--p-gold-glow);
+        }
+
+        /* --- Top-right toolbar --- */
+        .ar-toolbar {
+            position: fixed;
+            top: env(safe-area-inset-top, 8px);
+            right: 12px;
+            display: flex;
+            gap: 6px;
+            z-index: 2002;
+            margin-top: 36px;
+        }
+
+        .ar-toolbar button {
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: var(--p-dim);
+            padding: 7px 12px;
+            border-radius: 8px;
+            font-size: 0.6rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .ar-toolbar button:active {
+            background: rgba(255, 255, 255, 0.12);
+            color: var(--p-white);
+        }
+
+        /* --- Bottom restoration tray --- */
+        #restoration-ui {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            pointer-events: none;
+            z-index: 2000;
+            padding: 0 8px env(safe-area-inset-bottom, 8px);
+        }
+
+        .restoration-tray {
+            background: rgba(12, 12, 16, 0.78);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 12px;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 52vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,179,0,0.3) transparent;
+        }
+
+        .restoration-tray::-webkit-scrollbar { width: 4px; }
+        .restoration-tray::-webkit-scrollbar-thumb { background: rgba(255,179,0,0.3); border-radius: 2px; }
+        .restoration-tray::-webkit-scrollbar-track { background: transparent; }
+
+        /* --- Collapsible section --- */
+        .ctrl-section {
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .ctrl-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            background: rgba(255,255,255,0.03);
+        }
+        .ctrl-section-header:active { background: rgba(255,179,0,0.08); }
+        .ctrl-section-title {
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: var(--p-gold);
+            text-transform: uppercase;
+        }
+        .ctrl-section-arrow {
+            font-size: 0.55rem;
+            color: var(--p-dim);
+            transition: transform 0.2s;
+        }
+        .ctrl-section.collapsed .ctrl-section-arrow { transform: rotate(-90deg); }
+        .ctrl-section-body {
+            padding: 6px 10px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: max-height 0.25s ease, opacity 0.2s ease;
+            max-height: 600px;
+            opacity: 1;
+        }
+        .ctrl-section.collapsed .ctrl-section-body {
+            max-height: 0;
+            opacity: 0;
+            padding: 0 10px;
+            overflow: hidden;
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .slider-label {
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.25em;
+            color: var(--p-gold);
+            text-transform: uppercase;
+        }
+
+        .percentage {
+            font-size: 1.2rem;
+            font-weight: 800;
+            color: var(--p-white);
+        }
+
+        /* --- Slider --- */
+        .restoration-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        .restoration-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 24px;
+            height: 24px;
+            background: var(--p-white);
+            border: 2px solid var(--p-gold);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 15px var(--p-gold-glow);
+            transition: transform 0.2s;
+        }
+
+        .restoration-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        /* --- Settings rows --- */
+        .settings-row {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .settings-row label {
+            font-size: 0.55rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            color: var(--p-dim);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .settings-row input[type="number"] {
+            width: 52px;
+            padding: 4px 6px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--p-white);
+            font-size: 0.7rem;
+            text-align: center;
+            outline: none;
+        }
+
+        .settings-row input[type="range"] {
+            flex: 1;
+            min-width: 60px;
+            max-width: 120px;
+        }
+
+        .settings-row .fps-val {
+            font-size: 0.6rem;
+            color: var(--p-dim);
+            min-width: 20px;
+            text-align: right;
+        }
+
+        /* Toggle row for checkboxes */
+        .toggle-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 8px;
+        }
+        .toggle-grid label {
+            font-size: 0.55rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--p-dim);
+            padding: 4px 0;
+            min-height: 28px;
+        }
+        .toggle-grid input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        /* --- Progress bar --- */
+        #fbx-progress-container {
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #fbx-progress-container progress {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+        }
+
+        #fbx-progress-label {
+            font-size: 0.6rem;
+            color: var(--p-dim);
+            white-space: nowrap;
+        }
+
+        /* --- Tray scale labels --- */
+        .scale-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.55rem;
+            color: rgba(255, 255, 255, 0.35);
+            letter-spacing: 0.1em;
+        }
+
+        /* --- Bottom action buttons --- */
+        .tray-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            padding-top: 4px;
+        }
+
+        .tray-actions button {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--p-dim);
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 0.6rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+            min-height: 36px;
+        }
+
+        .tray-actions button:active {
+            background: rgba(255, 179, 0, 0.15);
+            color: var(--p-gold);
+        }
+
+        .tray-actions .btn-accent {
+            border-color: var(--p-gold);
+            color: var(--p-gold);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Video / Canvas / 3D layers -->
+    <div id="video-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="three-container"></div>
+    </div>
+    <!-- Restoration slider -->
+    <input type="range" id="restoration-range" min="0" max="100" value="0" style="position:absolute;bottom:20px;left:5%;width:90%;z-index:1000;">
+
+
+    <!-- Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
+        onerror="window.log && window.log('Errore Three.js CDN','error')"></script>
+    <script src="vendor/fflate.min.js"
+        onerror="window.log && window.log('Errore fflate locale (vendor/fflate.min.js)','error')"></script>
+    <script>
+
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"
+        onerror="window.log && window.log('Errore FBXLoader','error')"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+    <!-- js-aruco2 runtime dependency -->
+    <script src="vendor/js-aruco2.js"></script>
+
+    <script src="utils/pose-filter.js"></script>
+
+    <!-- App Logic -->
+    <script>
+        // Global error catcher
+        window.onerror = function (msg, url, line, col) {
+            if (window.log) window.log('GLOBAL ERROR: ' + msg + ' at ' + line + ':' + col, 'error');
+            return false;
+        };
+
+        function log(msg, type) {
+            type = type || 'info';
+            console.log('[' + type + '] ' + msg);
+        }
+        window.log = log;
+
+        log('Pagina caricata. Controllo librerie...');
+
+        setTimeout(function () {
+            if (typeof THREE === 'undefined') log('THREE.js non caricato!', 'error');
+            else log('THREE.js v' + THREE.REVISION);
+            if (typeof fflate === 'undefined') log('fflate non caricato!', 'error');
+            else log('fflate OK');
+            if (typeof AR !== 'undefined' && AR.Detector) log('js-aruco2 OK');
+            else log('js-aruco2 non caricato!', 'error');
+        }, 1200);
+    </script>
+
+    <script type="module">
+        import { RestorationEngine } from './utils/restoration-engine.js';
+
+        async function main() {
+            const engine = new RestorationEngine();
+            engine._validMarkerIds = new Set([1]);
+            engine._singleMarkerMode = true;
+            engine.markerSizeMM = 150;
+            engine._dictionaryName = 'ARUCO';
+            engine._detectionFps = 24;
+            engine._minMarkerPerimeter = 40;
+            engine._maxDetectSize = 768;
+            engine._debugOverlayEnabled = false;
+            engine.showMarkerHelpers(false);
+
+            try {
+                localStorage.removeItem('expear.markerOffsets.v4');
+                localStorage.removeItem('expear.anchorIds');
+                localStorage.removeItem('expear.anchorLock.v2');
+            } catch (_e) {}
+
+            engine.setMarkerOffsets({1:{pos:[0,0,0],quat:[0,0,0,1]}},{persist:true});
+            if (typeof engine.setUseAprilTag==='function') engine.setUseAprilTag(false);
+            if (typeof engine.setCornerFlowEnabled==='function') engine.setCornerFlowEnabled(false);
+            if (typeof engine.setCornerSmoothing==='function') engine.setCornerSmoothing(0);
+            if (typeof engine.setAnchorIds==='function') engine.setAnchorIds([1]);
+
+            await engine.init();
+            console.log('engine ready');
+        }
+
+        main();
+
+        // slider event
+        const slider = document.getElementById('restoration-range');
+        if (slider) {
+            slider.addEventListener('input', (e) => {
+                if (window.engine) window.engine.setRestorationLevel(e.target.value/100);
+            });
+        }
+    </script>
+</body>
+
+</html>

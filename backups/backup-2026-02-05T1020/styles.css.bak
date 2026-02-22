@@ -1,0 +1,155 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+    /* --- Zenith Design System V14 --- */
+    --p-bg-dark: #070707;
+    --p-bg-light: #fdfdfd;
+    --p-gold: #ffb300;
+    --p-gold-glow: rgba(255, 179, 0, 0.4);
+    --p-white: #ffffff;
+    --p-black: #000000;
+    --p-dim: rgba(255, 255, 255, 0.6);
+
+    /* Glassmorphism Transcendence */
+    --glass-blur: 40px;
+    --glass-bg: rgba(18, 18, 22, 0.5);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+
+    /* Responsive Spacing & Radii */
+    --safe-area: clamp(16px, 5vw, 32px);
+    --radius-lg: clamp(24px, 10vw, 48px);
+    --radius-md: 20px;
+
+    /* Easing */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    animation-play-state: paused !important;
+  }
+}
+
+/* Lightweight CSS background for start screen (replaces p5) */
+#start-screen .start-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(255,179,0,0.06) 0%, transparent 25%),
+    radial-gradient(circle at 10% 70%, rgba(255,107,53,0.04) 0%, transparent 20%);
+  animation: startPulse 6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes startPulse {
+  0% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #start-screen .start-bg { animation: none; }
+}
+
+body.high-contrast {
+    --p-bg-dark: #ffffff;
+    --p-bg-light: #000000;
+    --p-white: #000000;
+    --p-black: #ffffff;
+    --p-dim: rgba(0, 0, 0, 0.8);
+    --p-gold: #d50000;
+    --glass-bg: rgba(255, 255, 255, 0.95);
+    --glass-border: rgba(0, 0, 0, 0.2);
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--p-bg-dark);
+    color: var(--p-white);
+    overflow: hidden;
+    height: 100vh;
+    transition: background-color 0.5s var(--ease-out-expo), color 0.5s var(--ease-out-expo);
+    -webkit-font-smoothing: antialiased;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* --- Loader --- */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--p-bg-dark);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.loader-logo {
+    font-size: clamp(2rem, 8vw, 3rem);
+    font-weight: 800;
+    letter-spacing: 0.2em;
+    margin-bottom: 40px;
+    background: linear-gradient(135deg, #fff 0%, #666 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.progress-container {
+    width: 240px;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0;
+    background: var(--p-gold);
+    box-shadow: 0 0 15px var(--p-gold);
+}
+
+.loader-status {
+    font-size: 0.6rem;
+    letter-spacing: 0.4em;
+    color: var(--p-dim);
+}
+
+/* --- Start Screen --- */
+#start-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--safe-area);
+    text-align: center;
+}
+
+.hero-title {
+    font-size: clamp(3rem, 15vw, 6rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+    margin-bottom: 20px;
+}

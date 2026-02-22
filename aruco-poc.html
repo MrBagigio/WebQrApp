@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>POC - Object Tracking (ArUco) - ExpeAR Pro</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; color: #fff; font-family: 'Outfit', system-ui, sans-serif; overflow: hidden; }
+
+    /* ═══ LAYOUT: Full-viewport AR with overlaid Three.js ═══ */
+    #poc {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* AR viewport: video + overlay + Three.js stacked on top of each other */
+    .ar-viewport {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #111;
+    }
+
+    #video {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+
+    /* Debug detection overlay (green corner outlines) */
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* Three.js canvas overlays video with transparent background */
+    #three-container {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      pointer-events: none;
+    }
+    #three-container canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* Controls panel */
+    .controls {
+      position: relative;
+      z-index: 10;
+      padding: 10px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 0.8rem;
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+    .controls label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+    .controls input[type=range] { width: 100px; }
+    .controls input[type=number] { width: 60px; padding: 4px; background: #222; border: 1px solid #444; color: #fff; border-radius: 4px; }
+    .controls input[type=text],
+    .controls input[type=file] { font-size: 0.75rem; }
+    .controls button {
+      padding: 4px 10px;
+      background: #333;
+      border: 1px solid #555;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .controls button:hover { background: #555; }
+    .controls select {
+      padding: 4px;
+      background: #222;
+      border: 1px solid #444;
+      color: #fff;
+      border-radius: 4px;
+    }
+
+    /* Tracking status indicator */
+    .tracking-status {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 20;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      pointer-events: none;
+      transition: background 0.3s, color 0.3s;
+    }
+    .tracking-status.searching {
+      background: rgba(255, 179, 0, 0.25);
+      color: #FFB300;
+      border: 1px solid rgba(255, 179, 0, 0.4);
+    }
+    .tracking-status.tracking {
+      background: rgba(0, 255, 136, 0.25);
+      color: #00FF88;
+      border: 1px solid rgba(0, 255, 136, 0.4);
+    }
+
+    /* FPS counter */
+    .fps-counter {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 20;
+      padding: 4px 10px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-family: monospace;
+      color: #0f0;
+      pointer-events: none;
+    }
+
+    .note {
+      font-size: 0.75rem;
+      opacity: 0.6;
+      text-align: center;
+      padding: 4px 12px;
+      background: rgba(0,0,0,0.9);
+    }
+
+    /* Hide controls toggle for mobile */
+    .toggle-controls {
+      position: absolute;
+      bottom: 0;
+      right: 12px;
+      z-index: 11;
+      padding: 4px 12px;
+      background: rgba(0,0,0,0.7);
+      border: 1px solid #444;
+      color: #fff;
+      border-radius: 8px 8px 0 0;
+      font-size: 0.7rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="poc">
+    <!-- AR Viewport: video + debug overlay + Three.js overlay -->
+    <div class="ar-viewport">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="three-container"></div>
+
+      <!-- Status indicators -->
+      <div id="tracking-status" class="tracking-status searching">RICERCA MARKER...</div>
+      <div id="fps-counter" class="fps-counter">-- FPS</div>
+    </div>
+
+    <!-- Controls panel -->
+    <button class="toggle-controls" onclick="document.querySelector('.controls').classList.toggle('hidden')">⚙ Controlli</button>
+    <div class="controls">
+      <label>Marker (mm): <input id="marker-size" type="number" value="50" min="10" max="500"></label>
+      <label>Focal: <input id="focal" type="range" min="200" max="3000" value="800"></label>
+      <label>Scala: <input id="scale-factor" type="range" min="0.5" max="10" step="0.1" value="2.0"><span id="scale-val">2.0x</span></label>
+      <button id="calibrate">Calibra</button>
+      <button id="download-marker">Marker ID 0 ↓</button>
+      <label>glTF: <input id="upload-model" type="file" accept=".glb,.gltf"></label>
+
+      <span style="opacity:0.3">|</span>
+
+      <label><input id="toggle-smoothing" type="checkbox" checked> Smoothing</label>
+      <label><input id="toggle-kalman" type="checkbox"> Kalman</label>
+      <label><input id="toggle-ekf" type="checkbox"> EKF</label>
+      <label><input id="toggle-worker" type="checkbox" checked> Worker</label>
+      <label><input id="toggle-occlusion" type="checkbox"> Occlusion</label>
+      <label><input id="toggle-occluder-advanced" type="checkbox"> Adv. Occluder</label>
+      <label>Detect (ms): <input id="detection-rate" type="range" min="16" max="500" value="33"></label>
+
+      <span style="opacity:0.3">|</span>
+
+      <div style="display:inline-flex; gap:4px; align-items:center;">
+        <input id="preset-name" placeholder="Preset" style="padding:4px; width:100px; background:#222; border:1px solid #444; color:#fff; border-radius:4px;">
+        <button id="save-preset">Save</button>
+        <select id="preset-list"></select>
+        <button id="load-preset">Load</button>
+        <button id="delete-preset">Del</button>
+      </div>
+    </div>
+
+    <div class="note">Stampa ArUco marker ID 0 e inquadralo con la fotocamera. Carica un .glb per sovrapporre il tuo modello 3D.</div>
+  </div>
+
+  <!-- Prefer local OpenCV build; fallback to CDN -->
+  <script async src="vendor/opencv/opencv.js" onload="onOpenCvReady()"></script>
+  <script async src="https://docs.opencv.org/4.5.2/opencv.js" onload="onOpenCvReady()"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="utils/pose-filter.js"></script>
+  <script src="aruco.js"></script>
+  <script>
+    // ─── Scale factor display ───
+    (function () {
+      const sf = document.getElementById('scale-factor');
+      const sv = document.getElementById('scale-val');
+      if (sf && sv) {
+        sf.addEventListener('input', () => { sv.textContent = Number(sf.value).toFixed(1) + 'x'; });
+      }
+    })();
+
+    // ─── Tracking status indicator + FPS counter ───
+    (function () {
+      const statusEl = document.getElementById('tracking-status');
+      const fpsEl = document.getElementById('fps-counter');
+      let frames = 0;
+      let lastFpsTime = performance.now();
+
+      function tick() {
+        frames++;
+        const now = performance.now();
+
+        // FPS every 500ms
+        if (now - lastFpsTime >= 500) {
+          const fps = Math.round(frames / ((now - lastFpsTime) / 1000));
+          if (fpsEl) fpsEl.textContent = fps + ' FPS';
+          frames = 0;
+          lastFpsTime = now;
+        }
+
+        // Tracking status
+        if (statusEl) {
+          const isTracking = window.model && window.model.visible;
+          if (typeof window._markerVisible !== 'undefined') {
+            // Use internal state
+          }
+          if (window.model && window.model.visible) {
+            statusEl.textContent = 'TRACKING ●';
+            statusEl.className = 'tracking-status tracking';
+          } else {
+            statusEl.textContent = 'RICERCA MARKER...';
+            statusEl.className = 'tracking-status searching';
+          }
+        }
+
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    // ─── Fallback helpers for headless tests ───
+    (function () {
+      if (typeof window._applyPoseMeasurement !== 'function') {
+        window._applyPoseMeasurement = function ({ positionArr, quatArr, markerLength }) {
+          if (!window.model) return false;
+          const pos = new THREE.Vector3(positionArr[0], positionArr[1], positionArr[2]);
+          const quat = new THREE.Quaternion(quatArr[0], quatArr[1], quatArr[2], quatArr[3]);
+          window.model.position.copy(pos);
+          window.model.quaternion.copy(quat);
+          if (typeof markerLength === 'number') window.model.scale.set(markerLength, markerLength, markerLength);
+          window.model.visible = true;
+          return true;
+        };
+      }
+
+      if (typeof window._startStressTest !== 'function') {
+        window._startStressTest = function (opts = {}) {
+          const durationMs = opts.durationMs || 5000;
+          const intervalMs = opts.intervalMs || 50;
+          const noise = opts.noise || 0.01;
+          window._stressStats = { samples: 0, errors: [], start: Date.now() };
+          window._stressInterval = setInterval(() => {
+            try {
+              const basePos = [0.02, -0.01, -0.15];
+              const pos = basePos.map((v) => v + (Math.random() * 2 - 1) * noise);
+              const q = new THREE.Quaternion();
+              q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() * 2 - 1) * 0.05);
+              window._applyPoseMeasurement({ positionArr: pos, quatArr: [q.x, q.y, q.z, q.w], markerLength: 0.05 });
+              window._stressStats.samples++;
+            } catch (e) { window._stressStats.errors.push(String(e)); }
+          }, intervalMs);
+          window._rafCount = 0; window._rafRunning = true;
+          (function t() { window._rafCount++; if (window._rafRunning) requestAnimationFrame(t); })();
+          setTimeout(() => {
+            clearInterval(window._stressInterval); window._stressInterval = null; window._rafRunning = false; window._stressStats.end = Date.now();
+          }, durationMs);
+          return true;
+        };
+      }
+
+      if (typeof window._stopStressTest !== 'function') {
+        window._stopStressTest = function () {
+          if (window._stressInterval) { clearInterval(window._stressInterval); window._stressInterval = null; }
+          window._rafRunning = false;
+          if (window._stressStats) {
+            window._stressStats.end = Date.now();
+            window._stressStats.duration = window._stressStats.end - window._stressStats.start;
+            window._stressStats.rafCount = window._rafCount || 0;
+          }
+          return window._stressStats;
+        };
+      }
+    })();
+  </script>
+</body>
+</html>

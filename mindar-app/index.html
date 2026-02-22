@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindAR QR House Demo</title>
+  <!-- ensure all relative URLs resolve to the mindar-app folder (works on GitHub Pages) -->
+  <base href="./">
+
+  <!-- A-Frame + MindAR -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <!-- loaders must match A-Frame's internal Three.js version (0.128) -->
+  <!-- fflate required by FBXLoader; use the UMD build under umd/index.js (unpkg path differs) -->
+  <script src="https://unpkg.com/fflate@0.7.0/umd/index.js"></script>
+  <!-- local fallback in case CDN is blocked -->
+  <script>
+    if (typeof fflate === 'undefined') {
+      document.write('<script src="./lib/fflate.min.js"><\/script>');
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+  <!-- only load the model loader once below (with cache‑busting query) -->
+
+  <style>body{margin:0;overflow:hidden;}#hint{position:absolute;top:10px;left:10px;color:#fff;z-index:10;font-family:sans-serif;}</style>
+</head>
+<body>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+    }
+  </script>
+  <div id="hint">Questo demo visualizza un modello 3D sulla tua immagine QR.<br>
+    Dimensione:&nbsp;<input id="scale-slider" type="range" min="0.5" max="10" step="0.1" value="1" style="vertical-align:middle;">
+    <span id="scale-value">1.0</span>&nbsp;x<br>
+    Altezza:&nbsp;<input id="offset-slider" type="range" min="-0.2" max="0.2" step="0.01" value="0" style="vertical-align:middle;">
+    <span id="offset-value">0.00&nbsp;m</span><br>
+    Puoi caricare una casetta in formato <code>.glb</code>, <code>.gltf</code> o <code>.fbx</code> qui:
+    <input id="model-upload" type="file" accept=".glb,.gltf,.fbx" style="margin-top:6px;">
+    <br>oppure posiziona il file in <code>mindar-app/assets/house.*</code> sul server.</div>
+
+  <a-scene id="mindar-scene" mindar-image="imageTargetSrc: assets/targets.mind; uiScanning: yes;" 
+            color-space="sRGB" 
+            renderer="antialias: true;" 
+            vr-mode-ui="enabled: false" 
+            device-orientation-permission-ui="enabled: false">
+    <!-- load fallback helper and model loader (cache‑busted) -->
+    <script src="utils/house-fallback.js"></script>
+    <script src="utils/model-loader.js?v=2"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const sc = document.getElementById('mindar-scene');
+        const hint = document.getElementById('hint');
+
+        const slider = document.getElementById('scale-slider');
+        const valspan = document.getElementById('scale-value');
+        if (slider && valspan) {
+          slider.oninput = () => { 
+            valspan.textContent = slider.value;
+            window.houseScaleMultiplier = parseFloat(slider.value);
+          };
+          window.houseScaleMultiplier = parseFloat(slider.value);
+        }
+
+        const offsetSlider = document.getElementById('offset-slider');
+        const offsetVal = document.getElementById('offset-value');
+        if (offsetSlider && offsetVal) {
+          offsetSlider.oninput = () => {
+            const v = parseFloat(offsetSlider.value);
+            window.verticalOffset = v;
+            offsetVal.textContent = v.toFixed(2) + ' m';
+          };
+          window.verticalOffset = parseFloat(offsetSlider.value);
+        }
+
+        if (sc) {
+          sc.addEventListener('targetFound', () => {
+            console.log('MindAR target found');
+            if (hint) hint.textContent = 'TARGET RILEVATO';
+          });
+          sc.addEventListener('targetLost', () => {
+            console.log('MindAR target lost');
+            if (hint) hint.textContent = 'Punta il QR...';
+          });
+        }
+      });
+    </script>
+
+    <!-- camera required by A-Frame -->
+    <a-camera position="0 0 0"></a-camera>
+
+    <!-- tag target 栈 -->
+    <a-entity mindar-image-target="targetIndex: 0">
+      <!-- house placeholder; script will load GLB or FBX here -->
+      <a-entity id="house-model" scale="0.1 0.1 0.1" rotation="0 180 0"></a-entity>
+      <!-- simple fallback house if no model found -->
+      <a-group id="fallback-house" visible="true">
+        <a-box depth="0.5" height="0.3" width="0.5" color="#8B4513" position="0 0.15 0"></a-box>
+        <a-cone height="0.3" radius-bottom="0.4" radius-top="0" color="#A52A2A" position="0 0.45 0"></a-cone>
+      </a-group>
+    </a-entity>
+
+  </a-scene>
+</body>
+</html>

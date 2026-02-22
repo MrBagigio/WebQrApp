@@ -1,0 +1,5 @@
+
+/* Placeholder for OpenCV WASM binary.
+   Replace with a real build file 'opencv_js.wasm' (produced when building OpenCV.js with WASM support)
+   For CI or production, place the real wasm here at vendor/opencv/opencv_js.wasm
+*/

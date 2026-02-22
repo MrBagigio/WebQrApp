@@ -1,0 +1,30 @@
+2026-02-18T14:08:07Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+2026-02-18T14:08:07Z INF Requesting new quick Tunnel on trycloudflare.com...
+2026-02-18T14:08:12Z INF +--------------------------------------------------------------------------------------------+
+2026-02-18T14:08:12Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-02-18T14:08:12Z INF |  https://pdf-monster-discussed-territories.trycloudflare.com                               |
+2026-02-18T14:08:12Z INF +--------------------------------------------------------------------------------------------+
+2026-02-18T14:08:12Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp]
+2026-02-18T14:08:12Z INF Version 2026.2.0 (Checksum b3279f2186a1c3c438ad5865e802bbbec26090c5d3fdb4ac1113f1143a94837a)
+2026-02-18T14:08:12Z INF GOOS: windows, GOVersion: go1.24.13, GoArch: amd64
+2026-02-18T14:08:12Z INF Settings: map[ha-connections:1 protocol:quic url:http://127.0.0.1:8080]
+2026-02-18T14:08:12Z INF cloudflared will not automatically update on Windows systems.
+2026-02-18T14:08:12Z INF Generated Connector ID: 6da0dfa2-3c72-4cdc-b97f-1390c312792e
+2026-02-18T14:08:12Z INF Initial protocol quic
+2026-02-18T14:08:12Z INF ICMP proxy will use 192.168.1.108 as source for IPv4
+2026-02-18T14:08:12Z INF ICMP proxy will use fe80::81c4:cf07:70e:cd39 in zone Ethernet as source for IPv6
+2026-02-18T14:08:12Z INF cloudflared does not support loading the system root certificate pool on Windows. Please use --origin-ca-pool <PATH> to specify the path to the certificate pool
+2026-02-18T14:08:12Z INF ICMP proxy will use 192.168.1.108 as source for IPv4
+2026-02-18T14:08:12Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=0 event=0 ip=198.41.192.37
+2026-02-18T14:08:12Z INF ICMP proxy will use fe80::81c4:cf07:70e:cd39 in zone Ethernet as source for IPv6
+2026-02-18T14:08:12Z INF Starting metrics server on 127.0.0.1:20242/metrics
+2026-02-18T14:08:13Z INF Registered tunnel connection connIndex=0 connection=f07ecd79-c773-4c8c-9d2b-983fb4eb98df event=0 ip=198.41.192.37 location=mxp04 protocol=quic
+2026-02-18T14:46:05Z INF Initiating graceful shutdown due to signal terminated ...
+2026-02-18T14:46:05Z ERR failed to run the datagram handler error="context canceled" connIndex=0 event=0 ip=198.41.192.37
+2026-02-18T14:46:05Z ERR failed to serve tunnel connection error="accept stream listener encountered a failure while serving" connIndex=0 event=0 ip=198.41.192.37
+2026-02-18T14:46:05Z ERR Serve tunnel error error="accept stream listener encountered a failure while serving" connIndex=0 event=0 ip=198.41.192.37
+2026-02-18T14:46:05Z INF Retrying connection in up to 1s connIndex=0 event=0 ip=198.41.192.37
+2026-02-18T14:46:05Z ERR Connection terminated connIndex=0
+2026-02-18T14:46:05Z ERR no more connections active and exiting
+2026-02-18T14:46:05Z INF Tunnel server stopped
+2026-02-18T14:46:05Z INF Metrics server stopped
