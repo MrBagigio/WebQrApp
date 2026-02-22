@@ -57,6 +57,8 @@ export class RestorationEngine {
         this._detectionFps = 30;
         // Last raw markers received from worker (copy of data.markers)
         this._lastRawMarkers = [];
+        this._lastRawMarkersTs = 0;
+        this._debugOverlayHoldMs = 350;
         this._lastDetectionTime = 0;
         this._maxDetectSize = 768;
         this._detectionCanvas = null;
@@ -76,6 +78,8 @@ export class RestorationEngine {
         this._lastRenderTime = 0;
 
         this._debugOverlayEnabled = true;
+        this._centerLockStrength = 0.35;
+        this._centerLockMaxMeters = 0.08;
 
         // First-pose flag: snap to first detected pose, then smooth after
         this._hasFirstPose = false;
@@ -1164,18 +1168,21 @@ export class RestorationEngine {
             : rawMarkers.slice();
 
         // Keep a copy for UI / debug (all markers, with validity flag)
-        this._lastRawMarkers = rawMarkers.map(m => ({
-            id: m.id,
-            isValid: hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true,
-            corners: m.corners,
-            rvec: m.rvec ? m.rvec.slice() : null,
-            tvec: m.tvec ? m.tvec.slice() : null,
-            poseError: typeof m.poseError === 'number' ? m.poseError : null,
-            distance: (m.tvec && m.tvec.length === 3) ? Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]) : null,
-            source: m.source || null,
-            confidence: typeof m.confidence === 'number' ? m.confidence : null,
-            cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
-        }));
+        if (rawMarkers.length > 0) {
+            this._lastRawMarkers = rawMarkers.map(m => ({
+                id: m.id,
+                isValid: hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true,
+                corners: m.corners,
+                rvec: m.rvec ? m.rvec.slice() : null,
+                tvec: m.tvec ? m.tvec.slice() : null,
+                poseError: typeof m.poseError === 'number' ? m.poseError : null,
+                distance: (m.tvec && m.tvec.length === 3) ? Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]) : null,
+                source: m.source || null,
+                confidence: typeof m.confidence === 'number' ? m.confidence : null,
+                cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
+            }));
+            this._lastRawMarkersTs = now;
+        }
 
         const poseful = validMarkers.filter(m => m.rvec && m.tvec);
         if (poseful.length > 0) {
@@ -1285,7 +1292,11 @@ export class RestorationEngine {
         // Tolerate a few dropped frames (hysteresis) before hiding the model.
         // Mobile cameras often drop frames due to motion blur or autofocus.
         // 10 frames is about 300ms at 30fps, enough to prevent rapid flickering.
-        if (this._framesWithoutDetection >= 10) {
+        if ((now - this._lastTrackingTime) < 700) {
+            return;
+        }
+
+        if (this._framesWithoutDetection >= 16) {
             this._positionHistory = [];
             this._poseTargetPosition = null;
             this._poseTargetQuaternion = null;
@@ -1398,6 +1409,9 @@ export class RestorationEngine {
         const centerY = (marker.corners[0][1] + marker.corners[1][1] + marker.corners[2][1] + marker.corners[3][1]) / 4;
 
         const projected = position.clone().project(this.camera);
+        if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z)) {
+            return position;
+        }
         const px = (projected.x * 0.5 + 0.5) * this.overlay.width;
         const py = (-projected.y * 0.5 + 0.5) * this.overlay.height;
 
@@ -1412,8 +1426,12 @@ export class RestorationEngine {
         }
 
         const corrected = position.clone();
-        corrected.x += (dxPx * depth) / fx;
-        corrected.y -= (dyPx * depth) / fy;
+        const rawDx = ((dxPx * depth) / fx) * this._centerLockStrength;
+        const rawDy = (-(dyPx * depth) / fy) * this._centerLockStrength;
+        const dx = Math.max(-this._centerLockMaxMeters, Math.min(this._centerLockMaxMeters, rawDx));
+        const dy = Math.max(-this._centerLockMaxMeters, Math.min(this._centerLockMaxMeters, rawDy));
+        corrected.x += dx;
+        corrected.y += dy;
         return corrected;
     }
 
@@ -1432,7 +1450,12 @@ export class RestorationEngine {
         this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
 
         // Keep 2D debug overlay visible each render frame (not only when worker returns).
-        if (this._debugOverlayEnabled && this._lastRawMarkers && this._lastRawMarkers.length > 0) {
+        if (
+            this._debugOverlayEnabled &&
+            this._lastRawMarkers &&
+            this._lastRawMarkers.length > 0 &&
+            (now - this._lastRawMarkersTs) <= this._debugOverlayHoldMs
+        ) {
             this._drawMarkerOverlay(this._lastRawMarkers);
         }
 
