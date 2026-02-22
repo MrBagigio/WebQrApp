@@ -79,6 +79,8 @@
         <video id="video" playsinline autoplay muted></video>
         <canvas id="overlay"></canvas>
         <div id="three-container"></div>
+        <!-- status label (hidden by default, injected for engine) -->
+        <div id="tracking-status" style="position:absolute;top:10px;left:10px;z-index:1001;color:#fff;font-weight:bold;pointer-events:none;display:none;"></div>
     </div>
     <!-- Restoration slider -->
     <input type="range" id="restoration-range" min="0" max="100" value="0" style="position:absolute;bottom:20px;left:5%;width:90%;z-index:1000;">
@@ -126,7 +128,7 @@
     </script>
 
     <script type="module">
-        import { RestorationEngine } from './utils/restoration-engine.js';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=3';
 
         async function main() {
             const engine = new RestorationEngine();

@@ -1154,6 +1154,7 @@ export class RestorationEngine {
             statusEl.textContent = `ID ${m.id} · ${dist.toFixed(2)} m`;
             statusEl.style.color = 'var(--p-gold)';
             statusEl.classList.add('tracking');
+            statusEl.style.display = ''; // make sure it's visible (was hidden by CSS)
         }
     }
 
@@ -1179,6 +1180,7 @@ export class RestorationEngine {
                 statusEl.textContent = 'RICERCA TARGET...';
                 statusEl.style.color = 'var(--p-dim)';
                 statusEl.classList.remove('tracking');
+                statusEl.style.display = 'none';
             }
         }
     }
