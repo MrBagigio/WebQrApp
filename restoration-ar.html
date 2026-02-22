@@ -88,6 +88,11 @@
     <div style="position:absolute;top:10px;right:10px;z-index:1002;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;color:#fff;font:12px/1.4 sans-serif;">
         <div>Offset Y: <span id="model-y-offset-value">0.0 cm</span></div>
         <input type="range" id="model-y-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
+        <div style="margin-top:8px;">Scala: <span id="model-scale-value">1.00x</span></div>
+        <input type="range" id="model-scale" min="0.1" max="3.0" step="0.05" value="1.0" style="width:180px;">
+        <div style="margin-top:8px;">
+            <label><input type="checkbox" id="debug-overlay-toggle" checked> Debug Visivo</label>
+        </div>
     </div>
 
 
@@ -146,7 +151,7 @@
             engine._detectionFps = 24;
             engine._minMarkerPerimeter = 40;
             engine._maxDetectSize = 768;
-            engine._debugOverlayEnabled = false;
+            engine._debugOverlayEnabled = true;
             engine.showMarkerHelpers(false);
 
             try {
@@ -179,13 +184,35 @@
         const yOffsetSlider = document.getElementById('model-y-offset');
         const yOffsetValue = document.getElementById('model-y-offset-value');
         if (yOffsetSlider && yOffsetValue) {
-            const updateLabel = (cm) => { yOffsetValue.textContent = `${cm.toFixed(1)} cm`; };
+            const updateLabel = (cm) => { yOffsetValue.textContent = `${cm > 0 ? '+' : ''}${cm.toFixed(1)} cm`; };
             updateLabel(Number(yOffsetSlider.value));
             yOffsetSlider.addEventListener('input', (e) => {
                 const cm = Number(e.target.value);
                 updateLabel(cm);
                 if (window.engine && typeof window.engine.setModelYOffset === 'function') {
                     window.engine.setModelYOffset(cm / 100);
+                }
+            });
+        }
+
+        const scaleSlider = document.getElementById('model-scale');
+        const scaleValue = document.getElementById('model-scale-value');
+        if (scaleSlider && scaleValue) {
+            const updateScaleLabel = (s) => { scaleValue.textContent = `${s.toFixed(2)}x`; };
+            updateScaleLabel(Number(scaleSlider.value));
+            scaleSlider.addEventListener('input', (e) => {
+                const s = Number(e.target.value);
+                updateScaleLabel(s);
+                if (window.engine && typeof window.engine.setModelScale === 'function') {
+                    window.engine.setModelScale(s);
+                }
+            });
+        }
+        const debugToggle = document.getElementById('debug-overlay-toggle');
+        if (debugToggle) {
+            debugToggle.addEventListener('change', (e) => {
+                if (window.engine && typeof window.engine.setDebugOverlayEnabled === 'function') {
+                    window.engine.setDebugOverlayEnabled(e.target.checked);
                 }
             });
         }

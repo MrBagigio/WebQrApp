@@ -598,6 +598,18 @@ export class RestorationEngine {
 
     // ── Model scaling (safe for repeated calls) ──────────────────────────────
 
+    setModelScale(scaleFactor) {
+        this._modelScaleFactor = scaleFactor;
+        if (this.restoredModel) {
+            this._scaleModel(this.restoredModel, this._targetModelSize * this._modelScaleFactor);
+            this.restoredModel.position.y = this._modelYOffset;
+        }
+        if (this.destroyedModel) {
+            this._scaleModel(this.destroyedModel, this._targetModelSize * this._modelScaleFactor);
+            this.destroyedModel.position.y = this._modelYOffset;
+        }
+    }
+
     /**
      * Scale a loaded FBX so its largest dimension equals `targetMeters`.
      * Resets scale/position first so repeated calls are idempotent.
@@ -627,6 +639,9 @@ export class RestorationEngine {
         object.position.x -= centre.x;
         object.position.z -= centre.z;
         object.position.y -= box2.min.y;
+        
+        // Aggiorna la matrice per assicurarsi che il pivot sia corretto
+        object.updateMatrixWorld(true);
     }
 
     /** Compute model bounding box from whichever model is loaded. */
@@ -799,6 +814,7 @@ export class RestorationEngine {
         );
         this._housePivotHelper.add(houseAxes);
         this._housePivotHelper.add(housePivotDot);
+        this._housePivotHelper.visible = this._debugOverlayEnabled;
         this.modelGroup.add(this._housePivotHelper);
 
         // Debug helper: assi della posa marker rilevata (prima della correzione upright)
@@ -825,8 +841,9 @@ export class RestorationEngine {
     _loadModels() {
         const loader = new THREE.FBXLoader();
         // global multiplier from UI slider (1.0 default)
-        const mult = parseFloat(window.houseScaleMultiplier) || 1.0;
-        const targetSize = (this.houseSizeMM / 1000) * mult;
+        this._modelScaleFactor = this._modelScaleFactor || 1.0;
+        this._targetModelSize = (this.houseSizeMM / 1000);
+        const targetSize = this._targetModelSize * this._modelScaleFactor;
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
@@ -1137,7 +1154,7 @@ export class RestorationEngine {
 
         // Visualizza gli assi della posa marker così da confrontarli col pivot casetta
         if (this._markerPoseAxes) {
-            this._markerPoseAxes.visible = true;
+            this._markerPoseAxes.visible = this._debugOverlayEnabled;
             this._markerPoseAxes.position.copy(position);
             this._markerPoseAxes.quaternion.copy(quaternion);
         }
@@ -1209,6 +1226,76 @@ export class RestorationEngine {
                 statusEl.style.color = 'var(--p-dim)';
                 statusEl.classList.remove('tracking');
                 statusEl.style.display = 'none';
+            }
+        }
+    }
+
+    setDebugOverlayEnabled(enabled) {
+        this._debugOverlayEnabled = enabled;
+        if (this._housePivotHelper) this._housePivotHelper.visible = enabled;
+        if (this._markerPoseAxes && !this.isTracking) this._markerPoseAxes.visible = false;
+    }
+
+    // ── Overlay drawing ──────────────────────────────────────────────────────
+
+    _drawMarkerOverlay(markers) {
+        const ctx = this.overlayCtx;
+        // Clear previous marker drawings (video frame is re-drawn in _loop before this)
+        // We only clear the marker annotation layer — video background is handled by drawImage in _loop
+        const palette = ['#00ff88', '#00ccff', '#ffaa00', '#ff44aa'];
+
+        for (const m of markers) {
+            const c = m.corners;
+            if (!c || c.length < 4) continue;
+            
+            // Check isValid property if available (added in recent update) or default to checking valid IDs
+            const isValid = (typeof m.isValid === 'boolean') ? m.isValid : this._validMarkerIds.has(Number(m.id));
+            const color = isValid ? palette[m.id % palette.length] : '#ff0033'; // Red for invalid
+
+            // Polygon outline
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isValid ? 3 : 2;
+            if (!isValid) ctx.setLineDash([5, 5]); // Dashed for invalid
+            else ctx.setLineDash([]);
+            
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(c[0][0], c[0][1]);
+            for (let i = 1; i < c.length; i++) ctx.lineTo(c[i][0], c[i][1]);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset
+
+            // Corner dots and label
+            if (isValid) {
+                for (let i = 0; i < c.length; i++) {
+                    ctx.fillStyle = (i === 0) ? '#ff0000' : color;
+                    ctx.beginPath(); ctx.arc(c[i][0], c[i][1], 2, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+
+            // ID Label
+            const cx = (c[0][0] + c[2][0]) / 2;
+            const cy = (c[0][1] + c[2][1]) / 2;
+            
+            ctx.font = isValid ? 'bold 12px monospace' : '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const label = '#' + m.id + (isValid ? '' : ' ERR');
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            const metrics = ctx.measureText(label);
+            ctx.fillRect(cx - metrics.width/2 - 2, cy - 8, metrics.width + 4, 16);
+            
+            ctx.fillStyle = isValid ? '#ffffff' : '#ffcccc';
+            ctx.fillText(label, cx, cy);
+
+            // Add distance for valid markers 
+            if (isValid && m.tvec && m.tvec.length === 3) {
+                const dist = Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]);
+                ctx.fillStyle = '#ddd';
+                ctx.font = '10px monospace';
+                ctx.fillText(dist.toFixed(2) + ' m', cx, cy + 12);
             }
         }
     }
