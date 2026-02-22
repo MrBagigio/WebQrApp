@@ -1449,6 +1449,8 @@ export class RestorationEngine {
         // Draw video frame on overlay
         this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
 
+        const now = performance.now();
+
         // Keep 2D debug overlay visible each render frame (not only when worker returns).
         if (
             this._debugOverlayEnabled &&
@@ -1458,8 +1460,6 @@ export class RestorationEngine {
         ) {
             this._drawMarkerOverlay(this._lastRawMarkers);
         }
-
-        const now = performance.now();
 
         this._updateRenderPose(now);
 
