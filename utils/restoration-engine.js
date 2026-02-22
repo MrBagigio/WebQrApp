@@ -816,7 +816,11 @@ export class RestorationEngine {
 
         // Helper: shared material + scaling + bbox recompute
         const onLoaded = (object, opts) => {
-            // No automatic rotation; assume FBX is already correctly oriented.
+            // Apply a fixed FBX-up correction ONCE at model load time.
+            // This keeps pivot/bbox computations consistent with the final visible orientation.
+            object.quaternion.premultiply(new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ')
+            ));
             object.updateMatrixWorld(true);
 
             this._scaleModel(object, targetSize);
@@ -1112,14 +1116,9 @@ export class RestorationEngine {
             this._markerPoseAxes.quaternion.copy(quaternion);
         }
 
-        // Upright correction: apply a fixed rotation so the model's "up" axis
-        // matches Three.js Y.  Different FBX exports may use Z or -Y as up, so
-        // adjust the sign here if the roof appears oriented along the wrong axis.
-        // Default is -90° around X (Z→Y) which makes the roof point upward.
-        const uprightFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-        // the final quaternion is pose * uprightFix; multiply on the right so the
-        // upright correction is applied in the marker-local frame.
-        const finalQuat = quaternion.clone().multiply(uprightFix);
+        // Keep tracked quaternion pure marker pose.
+        // Model up-axis correction is already baked during FBX loading.
+        const finalQuat = quaternion.clone();
 
         this.modelGroup.position.copy(position);
         this.modelGroup.quaternion.copy(finalQuat);
