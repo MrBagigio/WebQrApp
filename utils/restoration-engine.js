@@ -368,6 +368,9 @@ export class RestorationEngine {
         this._debugOverlayEnabled = !!enable;
         if (this._housePivotHelper) this._housePivotHelper.visible = this._debugOverlayEnabled;
         if (this._markerPoseAxes) this._markerPoseAxes.visible = this._debugOverlayEnabled && this.isTracking;
+        if (!this._debugOverlayEnabled && this.overlayCtx && this.overlay) {
+            this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
+        }
         this.log('Debug overlay ' + (this._debugOverlayEnabled ? 'enabled' : 'disabled'));
     }
 
@@ -657,11 +660,11 @@ export class RestorationEngine {
             object.scale.set(s, s, s);
         }
 
-        // Re-centre: pivot at bottom-centre
+        // Re-centre: pivot at bottom-centre of the actual footprint (base area),
+        // not only bbox center. This avoids side offsets for asymmetrical meshes.
         object.updateMatrixWorld(true);
         const box2 = new THREE.Box3().setFromObject(object);
-        const centre = new THREE.Vector3();
-        box2.getCenter(centre);
+        const centre = this._computeModelFootprintCenter(object, box2);
         
         // Sposta l'oggetto in modo che il centro (X, Z) sia a 0, e la base (min.y) sia a 0
         object.position.x -= centre.x;
@@ -670,6 +673,49 @@ export class RestorationEngine {
         
         // Aggiorna la matrice per assicurarsi che il pivot sia corretto
         object.updateMatrixWorld(true);
+    }
+
+    _computeModelFootprintCenter(object, bbox) {
+        const fallback = new THREE.Vector3();
+        if (!object || !bbox) return fallback;
+        bbox.getCenter(fallback);
+
+        const minY = bbox.min.y;
+        const maxY = bbox.max.y;
+        const height = Math.max(1e-6, maxY - minY);
+        const yThreshold = minY + height * 0.12; // bottom 12% of mesh height
+
+        const invObject = new THREE.Matrix4().copy(object.matrixWorld).invert();
+        const worldPos = new THREE.Vector3();
+        const localPos = new THREE.Vector3();
+
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        let count = 0;
+
+        object.traverse((node) => {
+            if (!node.isMesh || !node.geometry || !node.geometry.attributes?.position) return;
+
+            const attr = node.geometry.attributes.position;
+            const step = Math.max(1, Math.floor(attr.count / 4000));
+
+            for (let i = 0; i < attr.count; i += step) {
+                worldPos.fromBufferAttribute(attr, i).applyMatrix4(node.matrixWorld);
+                if (worldPos.y > yThreshold) continue;
+
+                localPos.copy(worldPos).applyMatrix4(invObject);
+                if (localPos.x < minX) minX = localPos.x;
+                if (localPos.x > maxX) maxX = localPos.x;
+                if (localPos.z < minZ) minZ = localPos.z;
+                if (localPos.z > maxZ) maxZ = localPos.z;
+                count++;
+            }
+        });
+
+        if (count < 10 || !Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+            return fallback;
+        }
+
+        return new THREE.Vector3((minX + maxX) * 0.5, 0, (minZ + maxZ) * 0.5);
     }
 
     /** Compute model bounding box from whichever model is loaded. */
@@ -1131,10 +1177,6 @@ export class RestorationEngine {
             cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
         }));
 
-        if (this._debugOverlayEnabled && rawMarkers.length > 0) {
-            this._drawMarkerOverlay(this._lastRawMarkers);
-        }
-
         const poseful = validMarkers.filter(m => m.rvec && m.tvec);
         if (poseful.length > 0) {
             console.log('detected', poseful.length, 'valid markers');
@@ -1181,10 +1223,14 @@ export class RestorationEngine {
         const m = poseful[0];
         const { position, quaternion } = this._poseToThreeJs(m.rvec, m.tvec, m.source);
 
+        // Anti-sliding: keep projected model origin locked to detected marker center.
+        // This compensates small focal/pose errors that appear as lateral drift while orbiting.
+        const correctedPosition = this._applyMarkerCenterLock(position, m);
+
         // Visualizza gli assi della posa marker così da confrontarli col pivot casetta
         if (this._markerPoseAxes) {
             this._markerPoseAxes.visible = this._debugOverlayEnabled;
-            this._markerPoseAxes.position.copy(position);
+            this._markerPoseAxes.position.copy(correctedPosition);
             this._markerPoseAxes.quaternion.copy(quaternion);
         }
 
@@ -1192,23 +1238,23 @@ export class RestorationEngine {
         // Model up-axis correction is already baked during FBX loading.
         const finalQuat = quaternion.clone();
 
-        this.modelGroup.position.copy(position);
+        this.modelGroup.position.copy(correctedPosition);
         this.modelGroup.quaternion.copy(finalQuat);
 
-        this._poseTargetPosition = position.clone();
+        this._poseTargetPosition = correctedPosition.clone();
         this._poseTargetQuaternion = finalQuat.clone();
         // Debug output: log full pose information for external inspection
         try {
             const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';
             const conf = (m && typeof m.confidence !== 'undefined') ? m.confidence.toFixed(3) : 'n/a';
-            console.log('pose', position.toArray().map(n=>n.toFixed(3)), 'quat', this.modelGroup.quaternion.toArray(), 'err', err, 'conf', conf);
+            console.log('pose', correctedPosition.toArray().map(n=>n.toFixed(3)), 'quat', this.modelGroup.quaternion.toArray(), 'err', err, 'conf', conf);
         } catch (_e) {}
 
 
         this.isTracking = true;
         this.modelGroup.visible = true;
         // save last pose for external query
-        this._lastPoseInfo = { position: position.clone(), quaternion: this.modelGroup.quaternion.clone(), error: (m && m.poseError) || null, confidence: (m && m.confidence) || null };
+        this._lastPoseInfo = { position: correctedPosition.clone(), quaternion: this.modelGroup.quaternion.clone(), error: (m && m.poseError) || null, confidence: (m && m.confidence) || null };
 
         // Update marker helpers
         for (const hid in this._markerHelpers) {
@@ -1294,7 +1340,27 @@ export class RestorationEngine {
                 for (let i = 0; i < c.length; i++) {
                     ctx.fillStyle = (i === 0) ? '#ff0000' : color;
                     ctx.beginPath(); ctx.arc(c[i][0], c[i][1], 2, 0, Math.PI * 2); ctx.fill();
+                    ctx.font = '9px monospace';
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(String(i), c[i][0] + 6, c[i][1] - 6);
                 }
+
+                // Marker center crosshair + perceived plane diagonals
+                const centerX = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) / 4;
+                const centerY = (c[0][1] + c[1][1] + c[2][1] + c[3][1]) / 4;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(centerX - 8, centerY); ctx.lineTo(centerX + 8, centerY);
+                ctx.moveTo(centerX, centerY - 8); ctx.lineTo(centerX, centerY + 8);
+                ctx.stroke();
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(c[0][0], c[0][1]); ctx.lineTo(c[2][0], c[2][1]);
+                ctx.moveTo(c[1][0], c[1][1]); ctx.lineTo(c[3][0], c[3][1]);
+                ctx.stroke();
             }
 
             // ID Label
@@ -1323,6 +1389,34 @@ export class RestorationEngine {
         }
     }
 
+    _applyMarkerCenterLock(position, marker) {
+        if (!marker || !marker.corners || marker.corners.length < 4 || !this.overlay || !this.camera) {
+            return position;
+        }
+
+        const centerX = (marker.corners[0][0] + marker.corners[1][0] + marker.corners[2][0] + marker.corners[3][0]) / 4;
+        const centerY = (marker.corners[0][1] + marker.corners[1][1] + marker.corners[2][1] + marker.corners[3][1]) / 4;
+
+        const projected = position.clone().project(this.camera);
+        const px = (projected.x * 0.5 + 0.5) * this.overlay.width;
+        const py = (-projected.y * 0.5 + 0.5) * this.overlay.height;
+
+        const dxPx = centerX - px;
+        const dyPx = centerY - py;
+        const depth = Math.max(0.01, -position.z);
+        const fx = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[0] : this.focal;
+        const fy = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[4] : this.focal;
+
+        if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx <= 0 || fy <= 0) {
+            return position;
+        }
+
+        const corrected = position.clone();
+        corrected.x += (dxPx * depth) / fx;
+        corrected.y -= (dyPx * depth) / fy;
+        return corrected;
+    }
+
     // ── Render loop ──────────────────────────────────────────────────────────
 
     _loop() {
@@ -1336,6 +1430,11 @@ export class RestorationEngine {
 
         // Draw video frame on overlay
         this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
+
+        // Keep 2D debug overlay visible each render frame (not only when worker returns).
+        if (this._debugOverlayEnabled && this._lastRawMarkers && this._lastRawMarkers.length > 0) {
+            this._drawMarkerOverlay(this._lastRawMarkers);
+        }
 
         const now = performance.now();
 
