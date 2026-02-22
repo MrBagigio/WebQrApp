@@ -1112,10 +1112,13 @@ export class RestorationEngine {
             this._markerPoseAxes.quaternion.copy(quaternion);
         }
 
-        // Upright correction: rotate the house 90° around the marker's local X axis
-        // so it stands perpendicular to the flat marker surface.
-        // We MULTIPLY (not replace) so that the house tracks the full 3D pose.
-        const uprightFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0, 'XYZ'));
+        // Upright correction: apply a fixed rotation so the model's "up" axis
+        // matches Three.js Y.  Different FBX exports may use Z or -Y as up, so
+        // adjust the sign here if the roof appears oriented along the wrong axis.
+        // Default is -90° around X (Z→Y) which makes the roof point upward.
+        const uprightFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
+        // the final quaternion is pose * uprightFix; multiply on the right so the
+        // upright correction is applied in the marker-local frame.
         const finalQuat = quaternion.clone().multiply(uprightFix);
 
         this.modelGroup.position.copy(position);
