@@ -86,6 +86,7 @@ describe('RestorationEngine Refactoring Tests', () => {
         
         // Mock worker config methods
         engine.setCornerSmoothing = jest.fn();
+        engine.setCornerMedianEnabled = jest.fn();
         engine.setCornerFlowEnabled = jest.fn();
         engine.setCornerFlowSSDThreshold = jest.fn();
         engine.setUseSubpixel = jest.fn();
@@ -98,7 +99,7 @@ describe('RestorationEngine Refactoring Tests', () => {
 
         engine.applyStabilityPreset('mobile');
         
-        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.12 }));
+        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.04 }));
         expect(engine.setAnchorBoost).toHaveBeenCalledWith(2.0);
     });
 

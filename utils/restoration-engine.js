@@ -520,32 +520,30 @@ export class RestorationEngine {
                 }
             },
             mobile: {
-                // ── MOBILE (hand-held phone) ── SUPER-REACTIVE TOUR-AROUND ──
-                // Strategy: aggressive render lerp for instant response.
-                // Base lerp absorbs micro-tremor; velocity-adaptive ramp reaches
-                // 0.98 within ~12mm of gap for near-instant tracking when moving.
-                // Prediction fills gaps between camera frames (~30fps physical).
-                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.06 },
-                posHist: 3,      // median window (3 = fast follow, still removes spikes)
-                maxJump: 0.22,   // allow brisk tour-around movements
-                minPeri: 35,     // slightly higher to ignore far-away noise on mobile
+                // ── MOBILE (hand-held phone) ── ZERO-LATENCY TOUR-AROUND ──
+                // Strategy: minimal filtering, raw measurements pass through nearly
+                // instantly. The main-thread filter only damps velocity estimation.
+                // Worker median filter DISABLED to eliminate 2-frame pipeline delay.
+                filter: { positionSmoothing: 0.04, rotationTimeConstant: 0.025 },
+                posHist: 1,      // no median buffer (1 = passthrough)
+                maxJump: 0.25,   // allow fast tour-around movements
+                minPeri: 35,
                 anchorBoost: 2.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
                 fps: 120,        // max detection rate — process every camera frame ASAP
-                // Render lerp BASE values — higher base = faster response even for small movements
-                positionLerp: 0.55, rotationSlerp: 0.45,
-                centerLockStrength: 0.92,  // stronger lock to compensate mobile focal errors
+                // Render lerp — high base for instant response
+                positionLerp: 0.70, rotationSlerp: 0.60,
+                centerLockStrength: 0.92,
                 centerLockMaxMeters: 0.12,
-                trackingLostTimeout: 1200,  // mobile loses frames from motion blur; be more patient
+                trackingLostTimeout: 1200,
                 trackingLostFrames: 24,
                 worker: {
-                    cornerSmooth: 0,     // DISABLED — EMA formula is inverted (low α = laggy).
-                                         // Median filter (3 frames in worker) handles spike rejection.
-                                         // Main-thread PredictivePositionFilter handles smoothing.
+                    cornerSmooth: 0,       // ZERO — raw corners, no smoothing lag
+                    cornerMedian: false,   // DISABLED — eliminates 2-frame pipeline delay
                     flow: false,
                     subpix: false,
                     apriltag: false, pnp: false, lk: false,
-                    outlier: 0.20, conf: 0.10
+                    outlier: 0.25, conf: 0.08
                 }
             },
             desktop: {
@@ -601,6 +599,7 @@ export class RestorationEngine {
         const w = p.worker || {};
         try {
             if (w.cornerSmooth !== undefined) this.setCornerSmoothing(w.cornerSmooth);
+            if (w.cornerMedian !== undefined) this.setCornerMedianEnabled(w.cornerMedian);
             if (w.flow !== undefined) this.setCornerFlowEnabled(w.flow);
             if (w.flowSSD !== undefined) this.setCornerFlowSSDThreshold(w.flowSSD);
             if (w.subpix !== undefined) {
@@ -642,15 +641,15 @@ export class RestorationEngine {
                 const isMob = this._isMobile;
                 this.posFilter = new PoseFilters.PredictivePositionFilter({
                     responsiveness: responsiveness,
-                    velocitySmoothing: isMob ? 0.45 : 0.5,       // faster velocity tracking for reactive movement
-                    predictionFactor: isMob ? 0.55 : 0.5,        // aggressive prediction to fill gaps between ~30fps camera frames
-                    maxVelocity: isMob ? 2.5 : 3.0,              // allow fast tour-around movement speed
+                    velocitySmoothing: isMob ? 0.50 : 0.5,       // fast velocity tracking
+                    predictionFactor: isMob ? 0.60 : 0.5,        // aggressive prediction between camera frames
+                    maxVelocity: isMob ? 3.0 : 3.0,              // allow fast movements
                     maxPredictionDt: 0.06,                        // predict up to 60ms ahead
-                    maxPredictionStep: isMob ? 0.025 : 0.05,     // 25mm max prediction step on mobile
-                    velocityDamping: isMob ? 0.82 : 0.85,        // less damping = longer prediction carry
-                    positionDeadband: isMob ? 0.0015 : 0.001,    // 1.5mm deadband on mobile
-                    tremorRadius: isMob ? 0.004 : 0,             // 4mm tremor zone (smaller = less sticky)
-                    tremorAlpha: 0.12                             // blend factor inside tremor zone
+                    maxPredictionStep: isMob ? 0.035 : 0.05,     // 35mm max prediction step on mobile
+                    velocityDamping: isMob ? 0.85 : 0.85,        // less damping = longer prediction carry
+                    positionDeadband: isMob ? 0.0005 : 0.001,    // 0.5mm deadband — nearly zero
+                    tremorRadius: 0,                              // DISABLED — was causing 88% of small-movement lag
+                    tremorAlpha: 0.12
                 });
                 this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)} mobile=${isMob}`);
             }
@@ -724,6 +723,7 @@ export class RestorationEngine {
     clearAnchorLock(_opts) { /* stub */ }
     setAnchorLockEnabled(_enable) { /* stub */ }
     setCornerSmoothing(v) { if (this.worker) try { this.worker.postMessage({ type: 'config', cornerSmoothing: v }); } catch(_e){} }
+    setCornerMedianEnabled(v) { if (this.worker) try { this.worker.postMessage({ type: 'config', cornerMedianEnabled: !!v }); } catch(_e){} }
     setCornerFlowEnabled(_v) { /* stub */ }
     setCornerFlowSSDThreshold(_v) { /* stub */ }
     setUseSubpixel(_v) { /* stub */ }
@@ -1380,20 +1380,17 @@ export class RestorationEngine {
         }
 
         // ── Velocity-adaptive lerp ───────────────────────────────
-        // When the phone moves intentionally, the distance between current
-        // render position and target grows → ramp up lerp to follow fast.
-        // When stationary (hand tremor only), distance is tiny → use base
-        // (low) lerp to absorb the shaking.
+        // Base lerp is already high (0.70). When the gap between render
+        // position and target grows (phone moving), ramp to near-1.0.
         let posLerp = this._positionLerpFactor;
         let rotSlerp = this._rotationSlerpFactor;
 
         if (this._isMobile) {
             const gap = this.modelGroup.position.distanceTo(this._poseTargetPosition);
-            // Ramp: 0mm→base(0.55), 3mm→0.70, 6mm→0.85, 12mm+→0.98
-            // Steep ramp for instant response during tour-around
-            const t = Math.min(1, gap / 0.012); // normalize to 12mm (was 30mm)
+            // Ramp: 0mm→base(0.70), 5mm→0.85, 10mm+→0.98
+            const t = Math.min(1, gap / 0.010); // normalize to 10mm
             posLerp = this._positionLerpFactor + (0.98 - this._positionLerpFactor) * t;
-            rotSlerp = this._rotationSlerpFactor + (0.95 - this._rotationSlerpFactor) * t;
+            rotSlerp = this._rotationSlerpFactor + (0.96 - this._rotationSlerpFactor) * t;
         }
 
         this.modelGroup.position.lerp(this._poseTargetPosition, posLerp);

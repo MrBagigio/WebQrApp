@@ -19,7 +19,8 @@ const validMarkerIds = new Set([1]);
 let cornerSmoothing = 0; // 0..1 — disabled: let main-thread filters handle smoothing
 const lastCornersById = {};
 const lastCornersHistoryById = {}; // per-marker corner history for median filtering
-const maxCornerHistory = 3;        // frames kept for median corner — REDUCED from 5
+const maxCornerHistory = 3;        // frames kept for median corner
+let cornerMedianEnabled = true;    // can be disabled via config for lowest latency
 
 self.onmessage = (e) => {
     const msg = e.data;
@@ -66,8 +67,9 @@ self.onmessage = (e) => {
                 if (typeof msg.markerLength === 'number') markerLength = msg.markerLength;
                 if (typeof msg.cornerSmoothing === 'number') cornerSmoothing = Math.max(0, Math.min(1, msg.cornerSmoothing));
                 if (typeof msg.focalLength === 'number') focalLength = msg.focalLength;
+                if (typeof msg.cornerMedianEnabled === 'boolean') cornerMedianEnabled = msg.cornerMedianEnabled;
 
-                postMessage({ type: 'log', message: `worker config updated: markerLength=${markerLength}, cornerSmoothing=${cornerSmoothing.toFixed(2)}` });
+                postMessage({ type: 'log', message: `worker config updated: markerLength=${markerLength}, cornerSmoothing=${cornerSmoothing.toFixed(2)}, cornerMedian=${cornerMedianEnabled}` });
                 break;
             }
 
@@ -160,19 +162,25 @@ function processFrame(msg) {
 
         // Median corner filtering: accumulate per-marker corner history and take per-axis median
         // This reduces single-frame jitter from detection noise
-        if (!lastCornersHistoryById[m.id]) lastCornersHistoryById[m.id] = [];
-        lastCornersHistoryById[m.id].push(m.corners.map(c => ({ x: c.x, y: c.y })));
-        if (lastCornersHistoryById[m.id].length > maxCornerHistory) lastCornersHistoryById[m.id].shift();
+        // NOTE: adds ~2 frames of latency (uses middle value, not latest)
+        if (cornerMedianEnabled) {
+            if (!lastCornersHistoryById[m.id]) lastCornersHistoryById[m.id] = [];
+            lastCornersHistoryById[m.id].push(m.corners.map(c => ({ x: c.x, y: c.y })));
+            if (lastCornersHistoryById[m.id].length > maxCornerHistory) lastCornersHistoryById[m.id].shift();
 
-        if (lastCornersHistoryById[m.id].length >= 3) {
-            const hist = lastCornersHistoryById[m.id];
-            for (let i = 0; i < m.corners.length; i++) {
-                const xs = hist.map(h => h[i] ? h[i].x : m.corners[i].x).slice().sort((a, b) => a - b);
-                const ys = hist.map(h => h[i] ? h[i].y : m.corners[i].y).slice().sort((a, b) => a - b);
-                const mid = Math.floor(xs.length / 2);
-                m.corners[i].x = xs[mid];
-                m.corners[i].y = ys[mid];
+            if (lastCornersHistoryById[m.id].length >= 3) {
+                const hist = lastCornersHistoryById[m.id];
+                for (let i = 0; i < m.corners.length; i++) {
+                    const xs = hist.map(h => h[i] ? h[i].x : m.corners[i].x).slice().sort((a, b) => a - b);
+                    const ys = hist.map(h => h[i] ? h[i].y : m.corners[i].y).slice().sort((a, b) => a - b);
+                    const mid = Math.floor(xs.length / 2);
+                    m.corners[i].x = xs[mid];
+                    m.corners[i].y = ys[mid];
+                }
             }
+        } else {
+            // Clear history when disabled to avoid stale data if re-enabled
+            delete lastCornersHistoryById[m.id];
         }
 
         // Normalize corner order (top-left, top-right, bottom-right, bottom-left)
