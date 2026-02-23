@@ -167,9 +167,9 @@ export class RestorationEngine {
                         height: { ideal: idealHeight }
                     }
                 };
-                // On mobile, also request a specific frame rate to avoid thermal throttling
+                // On mobile, request highest possible frame rate for reactive tracking
                 if (this._isMobile) {
-                    constraints.video.frameRate = { ideal: 30, max: 30 };
+                    constraints.video.frameRate = { ideal: 60 };
                 }
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
             } catch (err) {
@@ -1340,11 +1340,9 @@ export class RestorationEngine {
 
         const poseful = validMarkers.filter(m => m.rvec && m.tvec);
         if (poseful.length > 0) {
-            console.log('detected', poseful.length, 'valid markers');
             this._applyTrackedPose(poseful, statusEl, now);
             return;
         }
-        console.log('tracking lost');
         this._handleTrackingLost(statusEl, now);
     }
 
@@ -1449,12 +1447,15 @@ export class RestorationEngine {
             this._markerPoseAxes.quaternion.copy(filteredQuat);
         }
 
-        // Debug output: log full pose information for external inspection
-        try {
-            const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';
-            const conf = (m && typeof m.confidence !== 'undefined') ? m.confidence.toFixed(3) : 'n/a';
-            console.log('pose', correctedPosition.toArray().map(n=>n.toFixed(3)), 'quat', this.modelGroup.quaternion.toArray(), 'err', err, 'conf', conf);
-        } catch (_e) {}
+        // Debug output: log pose info only every ~500ms to avoid console.log overhead on mobile
+        if (this._debugOverlayEnabled && (!this._lastPoseLogTime || (now - this._lastPoseLogTime) > 500)) {
+            this._lastPoseLogTime = now;
+            try {
+                const err = (m && typeof m.poseError !== 'undefined') ? m.poseError.toFixed(3) : 'n/a';
+                const conf = (m && typeof m.confidence !== 'undefined') ? m.confidence.toFixed(3) : 'n/a';
+                console.log('pose', correctedPosition.toArray().map(n=>n.toFixed(3)), 'quat', this.modelGroup.quaternion.toArray(), 'err', err, 'conf', conf);
+            } catch (_e) {}
+        }
 
 
         this.isTracking = true;
@@ -1675,8 +1676,8 @@ export class RestorationEngine {
                 ? this._detectionCanvas : this.overlay;
 
             if (src !== this.overlay) {
-                this._detectionCanvasCtx.clearRect(0, 0, src.width, src.height);
-                this._detectionCanvasCtx.drawImage(this.overlay, 0, 0, src.width, src.height);
+                // Draw directly from video (skip full-res overlay read + avoids debug annotations)
+                this._detectionCanvasCtx.drawImage(this.video, 0, 0, src.width, src.height);
             }
 
             createImageBitmap(src).then(bmp => {
