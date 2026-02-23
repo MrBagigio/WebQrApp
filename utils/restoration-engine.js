@@ -524,7 +524,7 @@ export class RestorationEngine {
                 minPeri: 35,     // slightly higher to ignore far-away noise on mobile
                 anchorBoost: 2.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
-                fps: 24,         // 24 fps detection — good balance perf vs responsiveness
+                fps: 60,         // 60 fps detection — massima reattività su mobile
                 // Render lerp BASE values (low = smooth when still; adaptive ramps up when moving)
                 positionLerp: 0.30, rotationSlerp: 0.25,
                 centerLockStrength: 0.92,  // stronger lock to compensate mobile focal errors
@@ -543,7 +543,7 @@ export class RestorationEngine {
                 filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.04 },
                 posHist: 3, maxJump: 0.5, minPeri: 25,
                 ekf: false, autoLock: false, clearLock: true,
-                fps: 30,
+                fps: 60,
                 positionLerp: 0.90, rotationSlerp: 0.90,
                 centerLockStrength: 0.85,
                 centerLockMaxMeters: 0.15,
