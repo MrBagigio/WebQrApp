@@ -461,7 +461,7 @@ export class RestorationEngine {
     }
 
     updateDetectionFps(fps) {
-        this._detectionFps = Math.max(1, Math.min(60, Number(fps) || 24));
+        this._detectionFps = Math.max(1, Math.min(120, Number(fps) || 60));
     }
 
     setDebugOverlayEnabled(enable) {
@@ -520,25 +520,26 @@ export class RestorationEngine {
                 }
             },
             mobile: {
-                // ── MOBILE (hand-held phone) ──
-                // Strategy: moderate filter smoothing + velocity-adaptive render lerp.
-                // Base lerp is low (absorbs tremor when still), but _updateRenderPose
-                // ramps it up to 0.95 when the phone is actually moving.
-                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.07 },
+                // ── MOBILE (hand-held phone) ── SUPER-REACTIVE TOUR-AROUND ──
+                // Strategy: aggressive render lerp for instant response.
+                // Base lerp absorbs micro-tremor; velocity-adaptive ramp reaches
+                // 0.98 within ~12mm of gap for near-instant tracking when moving.
+                // Prediction fills gaps between camera frames (~30fps physical).
+                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.06 },
                 posHist: 3,      // median window (3 = fast follow, still removes spikes)
-                maxJump: 0.18,   // reject large jumps but allow brisk movements
+                maxJump: 0.22,   // allow brisk tour-around movements
                 minPeri: 35,     // slightly higher to ignore far-away noise on mobile
                 anchorBoost: 2.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
-                fps: 60,         // 60 fps detection — massima reattività su mobile
-                // Render lerp BASE values (low = smooth when still; adaptive ramps up when moving)
-                positionLerp: 0.30, rotationSlerp: 0.25,
+                fps: 120,        // max detection rate — process every camera frame ASAP
+                // Render lerp BASE values — higher base = faster response even for small movements
+                positionLerp: 0.55, rotationSlerp: 0.45,
                 centerLockStrength: 0.92,  // stronger lock to compensate mobile focal errors
-                centerLockMaxMeters: 0.10,
+                centerLockMaxMeters: 0.12,
                 trackingLostTimeout: 1200,  // mobile loses frames from motion blur; be more patient
                 trackingLostFrames: 24,
                 worker: {
-                    cornerSmooth: 0.10,  // light worker-side smoothing for stable POSIT inputs
+                    cornerSmooth: 0.08,  // minimal worker-side smoothing for low latency
                     flow: false,
                     subpix: false,
                     apriltag: false, pnp: false, lk: false,
@@ -639,15 +640,15 @@ export class RestorationEngine {
                 const isMob = this._isMobile;
                 this.posFilter = new PoseFilters.PredictivePositionFilter({
                     responsiveness: responsiveness,
-                    velocitySmoothing: isMob ? 0.35 : 0.5,       // moderate velocity tracking on mobile
-                    predictionFactor: isMob ? 0.35 : 0.5,        // decent prediction to fill gaps between 24fps detections
-                    maxVelocity: isMob ? 1.5 : 3.0,              // allow reasonable phone movement speed
-                    maxPredictionDt: 0.05,                        // predict up to 50ms ahead (helps at 24fps)
-                    maxPredictionStep: isMob ? 0.015 : 0.05,     // 15mm max prediction step on mobile
-                    velocityDamping: isMob ? 0.75 : 0.85,        // moderate damping on mobile
-                    positionDeadband: isMob ? 0.002 : 0.001,     // 2mm deadband on mobile
-                    tremorRadius: isMob ? 0.006 : 0,             // 6mm tremor rejection zone on mobile
-                    tremorAlpha: 0.10                             // slightly stronger blend inside tremor zone
+                    velocitySmoothing: isMob ? 0.45 : 0.5,       // faster velocity tracking for reactive movement
+                    predictionFactor: isMob ? 0.55 : 0.5,        // aggressive prediction to fill gaps between ~30fps camera frames
+                    maxVelocity: isMob ? 2.5 : 3.0,              // allow fast tour-around movement speed
+                    maxPredictionDt: 0.06,                        // predict up to 60ms ahead
+                    maxPredictionStep: isMob ? 0.025 : 0.05,     // 25mm max prediction step on mobile
+                    velocityDamping: isMob ? 0.82 : 0.85,        // less damping = longer prediction carry
+                    positionDeadband: isMob ? 0.0015 : 0.001,    // 1.5mm deadband on mobile
+                    tremorRadius: isMob ? 0.004 : 0,             // 4mm tremor zone (smaller = less sticky)
+                    tremorAlpha: 0.12                             // blend factor inside tremor zone
                 });
                 this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)} mobile=${isMob}`);
             }
@@ -1386,10 +1387,11 @@ export class RestorationEngine {
 
         if (this._isMobile) {
             const gap = this.modelGroup.position.distanceTo(this._poseTargetPosition);
-            // Ramp: 0mm→base, 5mm→0.55, 15mm→0.85, 30mm+→0.95
-            const t = Math.min(1, gap / 0.030); // normalize to 30mm
-            posLerp = this._positionLerpFactor + (0.95 - this._positionLerpFactor) * t;
-            rotSlerp = this._rotationSlerpFactor + (0.90 - this._rotationSlerpFactor) * t;
+            // Ramp: 0mm→base(0.55), 3mm→0.70, 6mm→0.85, 12mm+→0.98
+            // Steep ramp for instant response during tour-around
+            const t = Math.min(1, gap / 0.012); // normalize to 12mm (was 30mm)
+            posLerp = this._positionLerpFactor + (0.98 - this._positionLerpFactor) * t;
+            rotSlerp = this._rotationSlerpFactor + (0.95 - this._rotationSlerpFactor) * t;
         }
 
         this.modelGroup.position.lerp(this._poseTargetPosition, posLerp);
