@@ -60,7 +60,7 @@ export class RestorationEngine {
         // Last raw markers received from worker (copy of data.markers)
         this._lastRawMarkers = [];
         this._lastRawMarkersTs = 0;
-        this._debugOverlayHoldMs = 350;
+        this._debugOverlayHoldMs = 200;  // hold overlay briefly between detections
         this._lastDetectionTime = 0;
         this._maxDetectSize = 768;
         this._detectionCanvas = null;
@@ -539,7 +539,9 @@ export class RestorationEngine {
                 trackingLostTimeout: 1200,  // mobile loses frames from motion blur; be more patient
                 trackingLostFrames: 24,
                 worker: {
-                    cornerSmooth: 0.08,  // minimal worker-side smoothing for low latency
+                    cornerSmooth: 0,     // DISABLED — EMA formula is inverted (low α = laggy).
+                                         // Median filter (3 frames in worker) handles spike rejection.
+                                         // Main-thread PredictivePositionFilter handles smoothing.
                     flow: false,
                     subpix: false,
                     apriltag: false, pnp: false, lk: false,
