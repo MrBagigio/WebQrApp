@@ -11,6 +11,9 @@ let markerLength = 0.1;  // meters (default 100mm)
 let focalLength = 800;   // pixels (updated per frame)
 let canvas = null;       // reusable OffscreenCanvas
 let ctx = null;
+let cachedPosit = null;  // reuse Posit instance when params unchanged
+let cachedPositLen = 0;
+let cachedPositFocal = 0;
 const validMarkerIds = new Set([1]);
 
 // Corner smoothing state (worker-side temporal filter to stabilise POSIT inputs)
@@ -191,11 +194,15 @@ function processFrame(msg) {
         const corners = m.corners.map(c => [c.x * scaleX, c.y * scaleY]);
         const result = { id: m.id, corners };
 
-        // Pose estimation: POSIT
+        // Pose estimation: POSIT (reuse cached instance when params unchanged)
         try {
             const centeredCorners = m.corners.map(c => ({ x: c.x - cx, y: -(c.y - cy) }));
-            const positInst = new POS.Posit(usedLength, focalLength);
-            const pose = positInst.pose(centeredCorners);
+            if (!cachedPosit || cachedPositLen !== usedLength || cachedPositFocal !== focalLength) {
+                cachedPosit = new POS.Posit(usedLength, focalLength);
+                cachedPositLen = usedLength;
+                cachedPositFocal = focalLength;
+            }
+            const pose = cachedPosit.pose(centeredCorners);
             if (pose && pose.bestRotation && pose.bestTranslation) {
                 result.rvec = rotMatToRvec(pose.bestRotation);
                 result.tvec = [pose.bestTranslation[0], pose.bestTranslation[1], pose.bestTranslation[2]];

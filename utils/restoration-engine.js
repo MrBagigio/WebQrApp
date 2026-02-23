@@ -404,6 +404,9 @@ export class RestorationEngine {
         const cropX = (bufW - visW) / 2;  // pixels cropped from left
         const cropY = (bufH - visH) / 2;  // pixels cropped from top
 
+        // Store crop params for use in _applyMarkerCenterLock
+        this._coverCrop = { visW, visH, cropX, cropY };
+
         // Shift principal point so it's relative to the visible region
         const cx = cx0 - cropX;
         const cy = cy0 - cropY;
@@ -494,7 +497,8 @@ export class RestorationEngine {
         if (this._housePivotHelper) this._housePivotHelper.visible = this._debugOverlayEnabled;
         if (this._markerPoseAxes) this._markerPoseAxes.visible = this._debugOverlayEnabled && this.isTracking;
         if (!this._debugOverlayEnabled && this.overlayCtx && this.overlay) {
-            this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
+            // Clear overlay to full transparency so the <video> element shows through
+            this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
         }
         this.log('Debug overlay ' + (this._debugOverlayEnabled ? 'enabled' : 'disabled'));
     }
@@ -1365,20 +1369,23 @@ export class RestorationEngine {
             ? rawMarkers.filter(m => this._validMarkerIds.has(Number(m.id)))
             : rawMarkers.slice();
 
-        // Keep a copy for UI / debug (all markers, with validity flag)
+        // Keep a copy for UI / debug (all markers, with validity flag).
+        // Skip deep copy when debug overlay is OFF to avoid per-frame allocations.
         if (rawMarkers.length > 0) {
-            this._lastRawMarkers = rawMarkers.map(m => ({
-                id: m.id,
-                isValid: hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true,
-                corners: m.corners,
-                rvec: m.rvec ? m.rvec.slice() : null,
-                tvec: m.tvec ? m.tvec.slice() : null,
-                poseError: typeof m.poseError === 'number' ? m.poseError : null,
-                distance: (m.tvec && m.tvec.length === 3) ? Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]) : null,
-                source: m.source || null,
-                confidence: typeof m.confidence === 'number' ? m.confidence : null,
-                cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
-            }));
+            if (this._debugOverlayEnabled) {
+                this._lastRawMarkers = rawMarkers.map(m => ({
+                    id: m.id,
+                    isValid: hasIdFilter ? this._validMarkerIds.has(Number(m.id)) : true,
+                    corners: m.corners,
+                    rvec: m.rvec ? m.rvec.slice() : null,
+                    tvec: m.tvec ? m.tvec.slice() : null,
+                    poseError: typeof m.poseError === 'number' ? m.poseError : null,
+                    distance: (m.tvec && m.tvec.length === 3) ? Math.hypot(m.tvec[0], m.tvec[1], m.tvec[2]) : null,
+                    source: m.source || null,
+                    confidence: typeof m.confidence === 'number' ? m.confidence : null,
+                    cameraAngleDeg: Number.isFinite(m.cameraAngleDeg) ? m.cameraAngleDeg : null
+                }));
+            }
             this._lastRawMarkersTs = now;
         }
 
@@ -1658,8 +1665,11 @@ export class RestorationEngine {
         if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z)) {
             return position;
         }
-        const px = (projected.x * 0.5 + 0.5) * this.overlay.width;
-        const py = (-projected.y * 0.5 + 0.5) * this.overlay.height;
+        // NDC maps to the visible (cropped) region, not the full buffer.
+        // Convert NDC → buffer pixel coords using the cover-crop offsets.
+        const crop = this._coverCrop || { visW: this.overlay.width, visH: this.overlay.height, cropX: 0, cropY: 0 };
+        const px = (projected.x * 0.5 + 0.5) * crop.visW + crop.cropX;
+        const py = (-projected.y * 0.5 + 0.5) * crop.visH + crop.cropY;
 
         const dxPx = centerX - px;
         const dyPx = centerY - py;
@@ -1692,19 +1702,22 @@ export class RestorationEngine {
             return;
         }
 
-        // Draw video frame on overlay
-        this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
-
         const now = performance.now();
 
-        // Keep 2D debug overlay visible each render frame (not only when worker returns).
-        if (
-            this._debugOverlayEnabled &&
-            this._lastRawMarkers &&
-            this._lastRawMarkers.length > 0 &&
-            (now - this._lastRawMarkersTs) <= this._debugOverlayHoldMs
-        ) {
-            this._drawMarkerOverlay(this._lastRawMarkers);
+        // Only draw video + debug annotations on overlay when debug is ON.
+        // When debug is OFF the <video> element is visible behind the
+        // transparent overlay, so we save 2-5ms/frame (full-res drawImage).
+        if (this._debugOverlayEnabled) {
+            this.overlayCtx.drawImage(this.video, 0, 0, this.overlay.width, this.overlay.height);
+
+            // Keep 2D debug overlay visible each render frame (not only when worker returns).
+            if (
+                this._lastRawMarkers &&
+                this._lastRawMarkers.length > 0 &&
+                (now - this._lastRawMarkersTs) <= this._debugOverlayHoldMs
+            ) {
+                this._drawMarkerOverlay(this._lastRawMarkers);
+            }
         }
 
         this._updateRenderPose(now);
@@ -1718,14 +1731,30 @@ export class RestorationEngine {
 
             const src = (this._detectionCanvas && this._detectionCanvas.width > 0)
                 ? this._detectionCanvas : this.overlay;
+            const targetW = src.width;
+            const targetH = src.height;
 
-            if (src !== this.overlay) {
-                // Draw directly from video (skip full-res overlay read + avoids debug annotations)
-                this._detectionCanvasCtx.drawImage(this.video, 0, 0, src.width, src.height);
-            }
+            // Create bitmap directly from <video> with resize.
+            // This skips the synchronous drawImage(video→canvas) on the main
+            // thread — the browser does resize+bitmap in one native step.
+            // Falls back to canvas-based path if resize options unsupported.
+            const bitmapPromise = (this._useDirectVideoBitmap !== false && targetW < this.video.videoWidth)
+                ? createImageBitmap(this.video, { resizeWidth: targetW, resizeHeight: targetH })
+                    .catch(() => {
+                        // Feature not supported — fall back permanently
+                        this._useDirectVideoBitmap = false;
+                        this._detectionCanvasCtx.drawImage(this.video, 0, 0, targetW, targetH);
+                        return createImageBitmap(src);
+                    })
+                : (() => {
+                    if (src !== this.overlay) {
+                        this._detectionCanvasCtx.drawImage(this.video, 0, 0, targetW, targetH);
+                    }
+                    return createImageBitmap(src);
+                })();
 
-            createImageBitmap(src).then(bmp => {
-                const scale = src.width / this.overlay.width;
+            bitmapPromise.then(bmp => {
+                const scale = targetW / this.overlay.width;
                 let cm;
                 if (this._cameraMatrix && this._cameraMatrix.length >= 9) {
                     const s = scale;
