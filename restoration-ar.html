@@ -144,7 +144,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=13';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=14';
 
         async function main() {
             const engine = new RestorationEngine();
@@ -153,7 +153,7 @@
             engine._singleMarkerMode = true;
             engine.markerSizeMM = 150;
             engine._dictionaryName = 'ARUCO';
-            engine._detectionFps = 24;
+            engine._detectionFps = 20;  // initial; overridden by auto-preset
             engine._minMarkerPerimeter = 40;
             engine._maxDetectSize = 768;
             engine._debugOverlayEnabled = true;

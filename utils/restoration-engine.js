@@ -72,7 +72,7 @@ export class RestorationEngine {
 
         // Small history buffer for position median filtering (reduces spikes)
         this._positionHistory = [];
-        this._positionHistorySize = 3; // robust median over short window (anti-jitter)
+        this._positionHistorySize = 5; // increased for hand-held mobile (dampens hand tremor)
 
         // High-frequency render-space smoothing toward measurement target
         this._poseTargetPosition = null;
@@ -80,8 +80,8 @@ export class RestorationEngine {
         this._lastRenderTime = 0;
 
         this._debugOverlayEnabled = true;
-        this._centerLockStrength = 0.85; // Aumentato per ancorare più saldamente il modello al centro del marker
-        this._centerLockMaxMeters = 0.15; // Aumentato per permettere correzioni più ampie
+        this._centerLockStrength = 0.85;
+        this._centerLockMaxMeters = 0.15;
 
         // First-pose flag: snap to first detected pose, then smooth after
         this._hasFirstPose = false;
@@ -92,6 +92,14 @@ export class RestorationEngine {
         // Optional camera calibration (cameraMatrix [9], distCoeffs [])
         this._cameraMatrix = null;
         this._distCoeffs = null;
+
+        // Mobile device detection
+        this._isMobile = false;
+        this._deviceProfile = 'desktop';
+
+        // Render-loop lerp factors (will be tuned per device type)
+        this._positionLerpFactor = 0.95;
+        this._rotationSlerpFactor = 0.95;
 
         this.restorationLevel = 0;
         this.onLog = null;
@@ -132,6 +140,9 @@ export class RestorationEngine {
             this.stop();
             this._stopped = false;
 
+            // Detect device type early
+            this._detectDevice();
+
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 throw new Error('API Camera non trovata. Usa HTTPS.');
             }
@@ -139,13 +150,22 @@ export class RestorationEngine {
             this.log('Richiesta accesso fotocamera...');
             let stream;
             try {
-                stream = await navigator.mediaDevices.getUserMedia({
+                // Mobile: request 720p for better performance (faster detection, less power usage)
+                // Desktop: request 1080p for higher accuracy
+                const idealWidth = this._isMobile ? 1280 : 1920;
+                const idealHeight = this._isMobile ? 720 : 1080;
+                const constraints = {
                     video: {
                         facingMode: { ideal: 'environment' },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
+                        width: { ideal: idealWidth },
+                        height: { ideal: idealHeight }
                     }
-                });
+                };
+                // On mobile, also request a specific frame rate to avoid thermal throttling
+                if (this._isMobile) {
+                    constraints.video.frameRate = { ideal: 30, max: 30 };
+                }
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
             } catch (err) {
                 if (err.name === 'NotAllowedError') {
                     throw new Error('Permesso negato. Controlla impostazioni browser o usa HTTPS.');
@@ -177,10 +197,10 @@ export class RestorationEngine {
                 await new Promise(r => setTimeout(r, 100));
             }
 
-            const isIPhone = /iPhone/i.test(navigator.userAgent || '');
-            if (isIPhone) {
-                this._maxDetectSize = 960;
-                this.log('iPhone mode: detection size 960');
+            // Set detection canvas size based on device
+            if (this._isMobile) {
+                this._maxDetectSize = this._deviceProfile === 'iphone' ? 640 : 640;
+                this.log(`Mobile mode (${this._deviceProfile}): detection size ${this._maxDetectSize}`);
             }
 
             this._setupCanvas();
@@ -190,10 +210,11 @@ export class RestorationEngine {
             this._initWorker();
             this._loop();
 
-            // Auto-select preset per device
+            // Auto-select preset per device type
             try {
-                const preset = isIPhone ? 'iphone13pro' : 'minimal';
+                const preset = this._isMobile ? 'mobile' : 'desktop';
                 this.applyStabilityPreset(preset);
+                this.log(`Auto-preset: ${preset} (device: ${this._deviceProfile})`);
             } catch (e) { /* ignore */ }
 
             this.log('Tutti i sistemi inizializzati.');
@@ -220,6 +241,34 @@ export class RestorationEngine {
         }
     }
 
+    // ── Device detection ──────────────────────────────────────────────────────
+
+    _detectDevice() {
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+        const isIPhone = /iPhone/i.test(ua);
+        const isIPad = /iPad/i.test(ua) || (/Macintosh/i.test(ua) && 'ontouchend' in document);
+        const isAndroid = /Android/i.test(ua);
+        const isSamsung = /SM-|Samsung/i.test(ua);
+        const isPixel = /Pixel/i.test(ua);
+        const isHuawei = /Huawei|HUAWEI/i.test(ua);
+        const isXiaomi = /Xiaomi|Redmi|POCO/i.test(ua);
+        const isOnePlus = /OnePlus/i.test(ua);
+
+        this._isMobile = isIPhone || isIPad || isAndroid || /Mobile/i.test(ua);
+
+        if (isIPhone) this._deviceProfile = 'iphone';
+        else if (isIPad) this._deviceProfile = 'ipad';
+        else if (isSamsung) this._deviceProfile = 'samsung';
+        else if (isPixel) this._deviceProfile = 'pixel';
+        else if (isHuawei) this._deviceProfile = 'huawei';
+        else if (isXiaomi) this._deviceProfile = 'xiaomi';
+        else if (isOnePlus) this._deviceProfile = 'oneplus';
+        else if (isAndroid) this._deviceProfile = 'android';
+        else this._deviceProfile = 'desktop';
+
+        this.log(`Device: ${this._deviceProfile} (mobile=${this._isMobile}) UA: ${ua.substring(0, 80)}`);
+    }
+
     // ── Canvas setup ─────────────────────────────────────────────────────────
 
     _setupCanvas() {
@@ -243,24 +292,49 @@ export class RestorationEngine {
     _estimateFocal() {
         if (!this.video || !this.overlay) return;
         const w = this.overlay.width || 0;
-        // height not needed for horizontal focal estimation
-        
-        // 1. Try to get hardware FOV
+        const h = this.overlay.height || 0;
+
+        // 1. Try hardware-reported FOV from MediaStream API
         let estimated = this._getHardwareFocal(w);
 
-        // 2. Fallback if hardware FOV failed
+        // 2. Fallback: device-specific FOV database (horizontal FOV in degrees)
+        //    These are typical rear wide camera FOVs for popular devices.
         if (!estimated || estimated < 100) {
-            const isIPhone = /iPhone/i.test(navigator.userAgent || '');
-            // Fallback tuned for mobile rear cameras; previous 0.9*max() was too high in portrait.
-            estimated = w * (isIPhone ? 0.73 : 0.78);
+            const fovDB = {
+                iphone:   69,  // iPhone 12-15 main camera ≈ 69° HFOV
+                ipad:     65,  // iPad rear camera
+                samsung:  73,  // Samsung Galaxy S series main ≈ 73°
+                pixel:    77,  // Google Pixel main ≈ 77°
+                huawei:   73,  // Huawei P/Mate series ≈ 73°
+                xiaomi:   74,  // Xiaomi main ≈ 74°
+                oneplus:  72,  // OnePlus main ≈ 72°
+                android:  70,  // Generic Android fallback
+                desktop:  60   // Desktop webcam
+            };
+            const hFov = fovDB[this._deviceProfile] || 68;
+            estimated = (w / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+            this.log(`Focal from device DB (${this._deviceProfile}): HFOV=${hFov}° → f=${Math.round(estimated)}px`);
         }
 
-        // 3. Clamp to plausible range
-        const minF = Math.max(100, w * 0.55);
-        const maxF = Math.max(minF + 1, w * 1.4);
+        // 3. Portrait mode correction: if video height > width, the horizontal
+        //    dimension is shorter so focal appears larger. Adjust for aspect.
+        if (h > w && this._isMobile) {
+            // In portrait the physical HFOV is narrower → focal is larger relative to width.
+            // But the camera sensor FOV stays the same; the width just maps to the shorter side.
+            // No special correction needed — FOV database already covers landscape.
+            // Just ensure we don't over-estimate in portrait.
+            const portraitFovGuess = (this._deviceProfile === 'iphone') ? 54 : 50;
+            const portraitFocal = (w / 2) / Math.tan((portraitFovGuess * Math.PI / 180) / 2);
+            estimated = Math.min(estimated, portraitFocal);
+            this.log(`Portrait mode correction: f=${Math.round(estimated)}px`);
+        }
+
+        // 4. Clamp to plausible range
+        const minF = Math.max(100, w * 0.45);
+        const maxF = Math.max(minF + 1, w * 1.6);
         this.focal = Math.max(minF, Math.min(maxF, estimated));
 
-        this.log(`Focale stimata: ${Math.round(this.focal)} px`);
+        this.log(`Focale stimata: ${Math.round(this.focal)} px (w=${w}, h=${h}, device=${this._deviceProfile})`);
     }
 
     _getHardwareFocal(width) {
@@ -271,17 +345,15 @@ export class RestorationEngine {
             const settings = track.getSettings ? track.getSettings() : {};
             let hFov = Number(settings.fov);
             const facingMode = settings.facingMode || '';
-            const isIPhone = /iPhone/i.test(navigator.userAgent || '');
 
+            // Many mobile browsers don't report FOV — check if it's a valid number
             if (!Number.isFinite(hFov) || hFov < 20 || hFov > 140) {
-                // Heuristics based on device type
-                if (facingMode === 'environment') {
-                    hFov = isIPhone ? 69 : 67; 
-                } else {
-                    hFov = 60; // Default wide
-                }
+                return 0; // Let device database handle it
             }
-            return (width / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+
+            const focal = (width / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+            this.log(`Hardware FOV: ${hFov.toFixed(1)}° (${facingMode}) → f=${Math.round(focal)}px`);
+            return focal;
         } catch (e) {
             this.log('FOV detect: ' + e.message, 'warn');
             return 0;
@@ -433,6 +505,8 @@ export class RestorationEngine {
                 posHist: 1, maxJump: 0.25, minPeri: 30, anchorBoost: 1.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
                 fps: 20,
+                // Render lerp: high for desktop (responsive)
+                positionLerp: 0.95, rotationSlerp: 0.95,
                 worker: {
                     cornerSmooth: 0.0, flow: false, subpix: false,
                     apriltag: false, pnp: false, lk: false,
@@ -440,22 +514,40 @@ export class RestorationEngine {
                 }
             },
             mobile: {
-                filter: { positionSmoothing: 0.08, rotationTimeConstant: 0.05 },
-                posHist: 3, maxJump: 0.3, minPeri: 30, anchorBoost: 2.5,
+                // ── MOBILE (hand-held phone) ──
+                // Higher smoothing to dampen hand tremor + slower rotation
+                // for stable AR experience on a shaky phone.
+                filter: { positionSmoothing: 0.18, rotationTimeConstant: 0.10 },
+                posHist: 5,      // larger median window to reject hand-shake spikes
+                maxJump: 0.12,   // reject large jumps (hand jerks / detection noise)
+                minPeri: 35,     // slightly higher to ignore far-away noise on mobile
+                anchorBoost: 2.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
-                fps: 60,
+                fps: 20,         // 20 fps detection — saves battery, reduces jitter noise
+                // Render lerp: lower for mobile to smooth out hand tremor
+                positionLerp: 0.35, rotationSlerp: 0.30,
+                centerLockStrength: 0.92,  // stronger lock to compensate mobile focal errors
+                centerLockMaxMeters: 0.10,
+                trackingLostTimeout: 1200,  // mobile loses frames from motion blur; be more patient
+                trackingLostFrames: 24,
                 worker: {
-                    cornerSmooth: 0.3, flow: true, flowSSD: 40,
-                    subpix: true, subpixParams: { win: 3, maxIter: 15, eps: 0.1 },
-                    apriltag: true, pnp: true, lk: true,
-                    outlier: 0.4, conf: 0.15
+                    cornerSmooth: 0.15,  // light worker-side smoothing for stable POSIT inputs
+                    flow: false,
+                    subpix: false,
+                    apriltag: false, pnp: false, lk: false,
+                    outlier: 0.20, conf: 0.10
                 }
             },
             desktop: {
                 filter: { positionSmoothing: 0.05, rotationTimeConstant: 0.04 },
-                posHist: 1, maxJump: 0.5, minPeri: 25,
+                posHist: 3, maxJump: 0.5, minPeri: 25,
                 ekf: false, autoLock: false, clearLock: true,
-                fps: 60,
+                fps: 30,
+                positionLerp: 0.90, rotationSlerp: 0.90,
+                centerLockStrength: 0.85,
+                centerLockMaxMeters: 0.15,
+                trackingLostTimeout: 800,
+                trackingLostFrames: 16,
                 worker: {}
             }
         };
@@ -482,6 +574,18 @@ export class RestorationEngine {
         if (p.lockEnabled !== undefined) this.setAnchorLockEnabled(p.lockEnabled);
         
         if (p.fps) this.updateDetectionFps(p.fps);
+
+        // Render interpolation factors (hand-held smoothing)
+        if (typeof p.positionLerp === 'number') this._positionLerpFactor = p.positionLerp;
+        if (typeof p.rotationSlerp === 'number') this._rotationSlerpFactor = p.rotationSlerp;
+
+        // Center lock tuning per device
+        if (typeof p.centerLockStrength === 'number') this._centerLockStrength = p.centerLockStrength;
+        if (typeof p.centerLockMaxMeters === 'number') this._centerLockMaxMeters = p.centerLockMaxMeters;
+
+        // Tracking loss hysteresis per device
+        if (typeof p.trackingLostTimeout === 'number') this._trackingTimeout = p.trackingLostTimeout;
+        if (typeof p.trackingLostFrames === 'number') this._trackingLostFrameThreshold = p.trackingLostFrames;
 
         // Worker configs (safely applied)
         const w = p.worker || {};
@@ -523,17 +627,22 @@ export class RestorationEngine {
                 this.posFilter.responsiveness = responsiveness;
                 this.log(`Position filter updated: responsiveness=${responsiveness.toFixed(3)}`);
             } else {
+                // Mobile: higher velocity smoothing + smaller prediction = more stable
+                // Desktop: lower smoothing + bigger prediction = more responsive
+                const isMob = this._isMobile;
                 this.posFilter = new PoseFilters.PredictivePositionFilter({
                     responsiveness: responsiveness,
-                    velocitySmoothing: 0.5,        // faster velocity estimation
-                    predictionFactor: 0.5,         // trust velocity more for inter-frame prediction
-                    maxVelocity: 3.0,              // allow faster movements without clamping
+                    velocitySmoothing: isMob ? 0.25 : 0.5,       // slower velocity estimation on mobile (hand tremor)
+                    predictionFactor: isMob ? 0.15 : 0.5,        // minimal prediction on mobile (erratic hand movement)
+                    maxVelocity: isMob ? 0.8 : 3.0,              // much lower on mobile (hand moves slowly vs mouse)
                     maxPredictionDt: 0.033,
-                    maxPredictionStep: 0.05,       // allow larger prediction steps
-                    velocityDamping: 0.85,
-                    positionDeadband: 0.001        // 1mm deadband
+                    maxPredictionStep: isMob ? 0.008 : 0.05,     // tiny steps on mobile to avoid overshooting
+                    velocityDamping: isMob ? 0.7 : 0.85,         // stronger damping on mobile
+                    positionDeadband: isMob ? 0.003 : 0.001,     // 3mm deadband on mobile to reject micro-tremor
+                    tremorRadius: isMob ? 0.008 : 0,             // 8mm tremor rejection zone on mobile
+                    tremorAlpha: 0.06                             // very gentle blend inside tremor zone
                 });
-                this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)}`);
+                this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)} mobile=${isMob}`);
             }
         }
         if (typeof rotationTimeConstant === 'number') {
@@ -1241,9 +1350,11 @@ export class RestorationEngine {
         }
 
         // Smoothly interpolate render transform towards target
-        // Use a high lerp factor (0.95) to be very responsive while still smoothing out 30fps stutter
-        this.modelGroup.position.lerp(this._poseTargetPosition, 0.95);
-        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, 0.95);
+        // Use configurable lerp/slerp factors:
+        // Desktop: high (0.90-0.95) for responsive tracking
+        // Mobile: lower (0.30-0.40) to smooth out hand-held tremor
+        this.modelGroup.position.lerp(this._poseTargetPosition, this._positionLerpFactor);
+        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, this._rotationSlerpFactor);
     }
 
     /**
@@ -1337,14 +1448,16 @@ export class RestorationEngine {
     _handleTrackingLost(statusEl, now) {
         this._framesWithoutDetection++;
 
-        // Tolerate a few dropped frames (hysteresis) before hiding the model.
+        // Tolerate dropped frames (hysteresis) before hiding the model.
         // Mobile cameras often drop frames due to motion blur or autofocus.
-        // 10 frames is about 300ms at 30fps, enough to prevent rapid flickering.
-        if ((now - this._lastTrackingTime) < 700) {
+        // Use configurable timeout and frame threshold (set by presets).
+        const timeout = this._trackingTimeout || 800;
+        if ((now - this._lastTrackingTime) < timeout) {
             return;
         }
 
-        if (this._framesWithoutDetection >= 16) {
+        const frameThreshold = this._trackingLostFrameThreshold || 16;
+        if (this._framesWithoutDetection >= frameThreshold) {
             this._positionHistory = [];
             this._poseTargetPosition = null;
             this._poseTargetQuaternion = null;

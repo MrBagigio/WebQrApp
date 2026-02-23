@@ -40,6 +40,10 @@ global.window = {
     devicePixelRatio: 1
 };
 global.navigator = { userAgent: 'Node' };
+// Mock document.ontouchend for _detectDevice (iPadOS check)
+if (typeof global.document === 'object' && !('ontouchend' in global.document)) {
+    // Leave ontouchend absent so iPadOS detection doesn't fire on Node
+}
 
 // Import the engine
 import { RestorationEngine } from '../../utils/restoration-engine.js';
@@ -94,8 +98,8 @@ describe('RestorationEngine Refactoring Tests', () => {
 
         engine.applyStabilityPreset('mobile');
         
-        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.08 }));
-        expect(engine.setAnchorBoost).toHaveBeenCalledWith(2.5);
+        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.18 }));
+        expect(engine.setAnchorBoost).toHaveBeenCalledWith(2.0);
     });
 
     test('_calculateAdaptiveParameters returns base values when adaptive is disabled', () => {

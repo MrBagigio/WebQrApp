@@ -105,7 +105,12 @@
       maxPredictionDt = 0.033,
       maxPredictionStep = 0.02,
       velocityDamping = 0.9,
-      positionDeadband = 0.0015
+      positionDeadband = 0.0015,
+      // Hand-tremor rejection: measurements within this radius of the current
+      // position are blended very gently instead of being tracked at full speed.
+      // Set higher (0.005–0.01 m) for mobile hand-held, lower/0 for tripod/desktop.
+      tremorRadius = 0,
+      tremorAlpha = 0.08  // blend factor when inside tremor radius (very slow)
     } = {}) {
       this.responsiveness = responsiveness;
       this.velocitySmoothing = velocitySmoothing;
@@ -115,6 +120,8 @@
       this.maxPredictionStep = maxPredictionStep;
       this.velocityDamping = velocityDamping;
       this.positionDeadband = positionDeadband;
+      this.tremorRadius = tremorRadius;
+      this.tremorAlpha = tremorAlpha;
       this.current = null;        // THREE.Vector3
       this.velocity = null;       // THREE.Vector3
       this.lastMeasurement = null;
@@ -162,8 +169,21 @@
       this.lastMeasurement = measured.clone();
 
       const deltaToCurrent = new THREE.Vector3().subVectors(measured, this.current);
-      if (deltaToCurrent.length() < this.positionDeadband) {
+      const dist = deltaToCurrent.length();
+
+      if (dist < this.positionDeadband) {
         if (this.velocity) this.velocity.multiplyScalar(this.velocityDamping);
+        return this.current;
+      }
+
+      // Hand-tremor rejection: if the measurement is within the tremor radius,
+      // blend very slowly instead of jumping to the measurement.
+      // This absorbs the micro-jitter caused by holding the phone in hand.
+      if (this.tremorRadius > 0 && dist < this.tremorRadius) {
+        const tremorBlend = this.tremorAlpha * confidence;
+        this.current.lerp(measured, tremorBlend);
+        // Dampen velocity heavily inside tremor zone
+        if (this.velocity) this.velocity.multiplyScalar(0.5);
         return this.current;
       }
 
