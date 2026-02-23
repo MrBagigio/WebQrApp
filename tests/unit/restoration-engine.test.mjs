@@ -98,7 +98,7 @@ describe('RestorationEngine Refactoring Tests', () => {
 
         engine.applyStabilityPreset('mobile');
         
-        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.18 }));
+        expect(engine.setFilterParams).toHaveBeenCalledWith(expect.objectContaining({ positionSmoothing: 0.12 }));
         expect(engine.setAnchorBoost).toHaveBeenCalledWith(2.0);
     });
 

@@ -204,15 +204,26 @@
       if (!this.current) return null;
       if (this.velocity && this.predictionFactor > 0 && dt > 0) {
         const safeDt = Math.min(this.maxPredictionDt, Math.max(0, dt));
-        const step = this.velocity.clone().multiplyScalar(safeDt * this.predictionFactor);
-        step.clampLength(0, this.maxPredictionStep);
-        this.current.add(step);
+        const velMag = this.velocity.length();
+
+        // Velocity-gated prediction: only predict when actually moving
+        // (avoids drifting from noisy velocity estimates when stationary)
+        if (velMag > 0.02) { // ~2cm/s threshold
+          const step = this.velocity.clone().multiplyScalar(safeDt * this.predictionFactor);
+          step.clampLength(0, this.maxPredictionStep);
+          this.current.add(step);
+        }
 
         if (this.velocityDamping < 1) {
           this.velocity.multiplyScalar(this.velocityDamping);
         }
       }
       return this.current;
+    }
+
+    /** Expose current estimated velocity magnitude (m/s) for adaptive logic. */
+    getVelocityMagnitude() {
+      return this.velocity ? this.velocity.length() : 0;
     }
   }
 

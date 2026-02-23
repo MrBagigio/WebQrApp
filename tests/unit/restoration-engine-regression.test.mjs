@@ -13,6 +13,7 @@ global.THREE = {
         project(){return this;}
         toArray(){return [this.x,this.y,this.z];}
         lerp(v, alpha){this.x+=(v.x-this.x)*alpha;this.y+=(v.y-this.y)*alpha;this.z+=(v.z-this.z)*alpha;return this;}
+        distanceTo(v){return Math.sqrt((this.x-v.x)**2+(this.y-v.y)**2+(this.z-v.z)**2);}
     },
     Quaternion: class { 
         constructor(x,y,z,w){this.x=x||0;this.y=y||0;this.z=z||0;this.w=w!==undefined?w:1} 

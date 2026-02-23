@@ -515,23 +515,24 @@ export class RestorationEngine {
             },
             mobile: {
                 // ── MOBILE (hand-held phone) ──
-                // Higher smoothing to dampen hand tremor + slower rotation
-                // for stable AR experience on a shaky phone.
-                filter: { positionSmoothing: 0.18, rotationTimeConstant: 0.10 },
-                posHist: 5,      // larger median window to reject hand-shake spikes
-                maxJump: 0.12,   // reject large jumps (hand jerks / detection noise)
+                // Strategy: moderate filter smoothing + velocity-adaptive render lerp.
+                // Base lerp is low (absorbs tremor when still), but _updateRenderPose
+                // ramps it up to 0.95 when the phone is actually moving.
+                filter: { positionSmoothing: 0.12, rotationTimeConstant: 0.07 },
+                posHist: 3,      // median window (3 = fast follow, still removes spikes)
+                maxJump: 0.18,   // reject large jumps but allow brisk movements
                 minPeri: 35,     // slightly higher to ignore far-away noise on mobile
                 anchorBoost: 2.0,
                 ekf: false, anchorIds: null, autoLock: false, clearLock: true, lockEnabled: false,
-                fps: 20,         // 20 fps detection — saves battery, reduces jitter noise
-                // Render lerp: lower for mobile to smooth out hand tremor
-                positionLerp: 0.35, rotationSlerp: 0.30,
+                fps: 24,         // 24 fps detection — good balance perf vs responsiveness
+                // Render lerp BASE values (low = smooth when still; adaptive ramps up when moving)
+                positionLerp: 0.30, rotationSlerp: 0.25,
                 centerLockStrength: 0.92,  // stronger lock to compensate mobile focal errors
                 centerLockMaxMeters: 0.10,
                 trackingLostTimeout: 1200,  // mobile loses frames from motion blur; be more patient
                 trackingLostFrames: 24,
                 worker: {
-                    cornerSmooth: 0.15,  // light worker-side smoothing for stable POSIT inputs
+                    cornerSmooth: 0.10,  // light worker-side smoothing for stable POSIT inputs
                     flow: false,
                     subpix: false,
                     apriltag: false, pnp: false, lk: false,
@@ -632,15 +633,15 @@ export class RestorationEngine {
                 const isMob = this._isMobile;
                 this.posFilter = new PoseFilters.PredictivePositionFilter({
                     responsiveness: responsiveness,
-                    velocitySmoothing: isMob ? 0.25 : 0.5,       // slower velocity estimation on mobile (hand tremor)
-                    predictionFactor: isMob ? 0.15 : 0.5,        // minimal prediction on mobile (erratic hand movement)
-                    maxVelocity: isMob ? 0.8 : 3.0,              // much lower on mobile (hand moves slowly vs mouse)
-                    maxPredictionDt: 0.033,
-                    maxPredictionStep: isMob ? 0.008 : 0.05,     // tiny steps on mobile to avoid overshooting
-                    velocityDamping: isMob ? 0.7 : 0.85,         // stronger damping on mobile
-                    positionDeadband: isMob ? 0.003 : 0.001,     // 3mm deadband on mobile to reject micro-tremor
-                    tremorRadius: isMob ? 0.008 : 0,             // 8mm tremor rejection zone on mobile
-                    tremorAlpha: 0.06                             // very gentle blend inside tremor zone
+                    velocitySmoothing: isMob ? 0.35 : 0.5,       // moderate velocity tracking on mobile
+                    predictionFactor: isMob ? 0.35 : 0.5,        // decent prediction to fill gaps between 24fps detections
+                    maxVelocity: isMob ? 1.5 : 3.0,              // allow reasonable phone movement speed
+                    maxPredictionDt: 0.05,                        // predict up to 50ms ahead (helps at 24fps)
+                    maxPredictionStep: isMob ? 0.015 : 0.05,     // 15mm max prediction step on mobile
+                    velocityDamping: isMob ? 0.75 : 0.85,        // moderate damping on mobile
+                    positionDeadband: isMob ? 0.002 : 0.001,     // 2mm deadband on mobile
+                    tremorRadius: isMob ? 0.006 : 0,             // 6mm tremor rejection zone on mobile
+                    tremorAlpha: 0.10                             // slightly stronger blend inside tremor zone
                 });
                 this.log(`Position filter init: responsiveness=${responsiveness.toFixed(3)} mobile=${isMob}`);
             }
@@ -1349,12 +1350,24 @@ export class RestorationEngine {
             }
         }
 
-        // Smoothly interpolate render transform towards target
-        // Use configurable lerp/slerp factors:
-        // Desktop: high (0.90-0.95) for responsive tracking
-        // Mobile: lower (0.30-0.40) to smooth out hand-held tremor
-        this.modelGroup.position.lerp(this._poseTargetPosition, this._positionLerpFactor);
-        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, this._rotationSlerpFactor);
+        // ── Velocity-adaptive lerp ───────────────────────────────
+        // When the phone moves intentionally, the distance between current
+        // render position and target grows → ramp up lerp to follow fast.
+        // When stationary (hand tremor only), distance is tiny → use base
+        // (low) lerp to absorb the shaking.
+        let posLerp = this._positionLerpFactor;
+        let rotSlerp = this._rotationSlerpFactor;
+
+        if (this._isMobile) {
+            const gap = this.modelGroup.position.distanceTo(this._poseTargetPosition);
+            // Ramp: 0mm→base, 5mm→0.55, 15mm→0.85, 30mm+→0.95
+            const t = Math.min(1, gap / 0.030); // normalize to 30mm
+            posLerp = this._positionLerpFactor + (0.95 - this._positionLerpFactor) * t;
+            rotSlerp = this._rotationSlerpFactor + (0.90 - this._rotationSlerpFactor) * t;
+        }
+
+        this.modelGroup.position.lerp(this._poseTargetPosition, posLerp);
+        this.modelGroup.quaternion.slerp(this._poseTargetQuaternion, rotSlerp);
     }
 
     /**
