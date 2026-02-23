@@ -93,6 +93,12 @@ export class RestorationEngine {
         this._cameraMatrix = null;
         this._distCoeffs = null;
 
+        // Marker offset storage key
+        this._markerOffsetsStorageKey = 'expear.markerOffsets.v4';
+
+        // Max position jump (meters) — set by presets
+        this._maxPositionJump = 0.5;
+
         // Mobile device detection
         this._isMobile = false;
         this._deviceProfile = 'desktop';
@@ -704,6 +710,26 @@ export class RestorationEngine {
         this._maxPositionJump = Math.max(0.01, Number(meters) || this._maxPositionJump);
         this.log(`Max position jump ${this._maxPositionJump} m`);
     }
+
+    // ── Stub methods (anchor/EKF features live in marker-app full version) ──
+    // These stubs prevent applyStabilityPreset from crashing when calling
+    // methods that only exist in the multi-marker marker-app engine.
+    setAnchorBoost(v) { this._anchorBoost = Number(v) || 1; }
+    setUseQuaternionEKF(_enable) { /* stub */ }
+    setAnchorIds(_ids) { /* stub */ }
+    setAnchorAutoLockEnabled(_enable) { /* stub */ }
+    clearAnchorLock(_opts) { /* stub */ }
+    setAnchorLockEnabled(_enable) { /* stub */ }
+    setCornerSmoothing(v) { if (this.worker) try { this.worker.postMessage({ type: 'config', cornerSmoothing: v }); } catch(_e){} }
+    setCornerFlowEnabled(_v) { /* stub */ }
+    setCornerFlowSSDThreshold(_v) { /* stub */ }
+    setUseSubpixel(_v) { /* stub */ }
+    setSubpixelParams(_v) { /* stub */ }
+    setUseAprilTag(_v) { /* stub */ }
+    setUseSolvePnP(_v) { /* stub */ }
+    setUsePyrLKFlow(_v) { /* stub */ }
+    setMarkerOutlierDistanceMeters(_v) { /* stub */ }
+    setMarkerConfidenceThreshold(_v) { /* stub */ }
 
     // Persist/load helper
     _saveMarkerOffsetsToStorage() {

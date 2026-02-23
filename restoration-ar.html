@@ -94,6 +94,8 @@
         <input type="range" id="model-z-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
         <div style="margin-top:8px;">Scala: <span id="model-scale-value">1.00x</span></div>
         <input type="range" id="model-scale" min="0.1" max="3.0" step="0.05" value="1.0" style="width:180px;">
+        <div style="margin-top:8px;">Det. FPS: <span id="detection-fps-value">60</span></div>
+        <input type="range" id="detection-fps" min="1" max="60" step="1" value="60" style="width:180px;">
         <div style="margin-top:8px;">
             <label><input type="checkbox" id="debug-overlay-toggle" checked> Debug Visivo</label>
         </div>
@@ -144,7 +146,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=14';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=15';
 
         async function main() {
             const engine = new RestorationEngine();
@@ -173,6 +175,13 @@
 
             await engine.init();
             if (typeof engine.setModelYOffset === 'function') engine.setModelYOffset(0);
+            // Sync FPS slider with actual engine detection FPS (set by auto-preset)
+            const fpsSliderEl = document.getElementById('detection-fps');
+            const fpsValueEl = document.getElementById('detection-fps-value');
+            if (fpsSliderEl && fpsValueEl && engine._detectionFps) {
+                fpsSliderEl.value = engine._detectionFps;
+                fpsValueEl.textContent = engine._detectionFps;
+            }
             console.log('engine ready');
         }
 
@@ -249,6 +258,20 @@
             debugToggle.addEventListener('change', (e) => {
                 if (window.engine && typeof window.engine.setDebugOverlayEnabled === 'function') {
                     window.engine.setDebugOverlayEnabled(e.target.checked);
+                }
+            });
+        }
+
+        const fpsSlider = document.getElementById('detection-fps');
+        const fpsValue = document.getElementById('detection-fps-value');
+        if (fpsSlider && fpsValue) {
+            const updateFpsLabel = (v) => { fpsValue.textContent = v; };
+            updateFpsLabel(fpsSlider.value);
+            fpsSlider.addEventListener('input', (e) => {
+                const fps = Number(e.target.value);
+                updateFpsLabel(fps);
+                if (window.engine && typeof window.engine.updateDetectionFps === 'function') {
+                    window.engine.updateDetectionFps(fps);
                 }
             });
         }
