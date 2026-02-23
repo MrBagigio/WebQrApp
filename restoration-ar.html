@@ -80,26 +80,96 @@
         <canvas id="overlay"></canvas>
         <div id="three-container"></div>
         <!-- status label (hidden by default, injected for engine) -->
-        <div id="tracking-status" style="position:absolute;top:10px;left:10px;z-index:1001;color:#fff;font-weight:bold;pointer-events:none;display:none;"></div>
+        <div id="tracking-status" style="position:absolute;bottom:55px;left:10px;z-index:1001;color:#fff;font:bold 13px/1 system-ui,sans-serif;pointer-events:none;display:none;text-shadow:0 1px 3px rgba(0,0,0,0.7);"></div>
     </div>
     <!-- Restoration slider -->
     <input type="range" id="restoration-range" min="0" max="100" value="0" style="position:absolute;bottom:20px;left:5%;width:90%;z-index:1000;">
-    <!-- Model Y offset tuning (cm) -->
-    <div style="position:absolute;top:10px;right:10px;z-index:1002;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;color:#fff;font:12px/1.4 sans-serif;">
+
+    <!-- Collapsible controls panel (collapsed by default to not cover the model) -->
+    <style>
+        #controls-toggle {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 1003;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255,255,255,0.35);
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            font-size: 18px;
+            line-height: 34px;
+            text-align: center;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            transition: transform 0.2s;
+        }
+        #controls-toggle:active { transform: scale(0.9); }
+
+        #controls-panel {
+            position: absolute;
+            top: 50px;
+            right: 8px;
+            z-index: 1002;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            padding: 10px 12px;
+            border-radius: 10px;
+            color: #fff;
+            font: 11px/1.5 system-ui, sans-serif;
+            max-height: calc(100vh - 120px);
+            max-width: 210px;
+            overflow-y: auto;
+            transition: opacity 0.2s, transform 0.2s;
+            transform-origin: top right;
+            pointer-events: auto;
+        }
+        #controls-panel.collapsed {
+            opacity: 0;
+            transform: scale(0.9);
+            pointer-events: none;
+        }
+        #controls-panel input[type=range] {
+            width: 100%;
+            height: 3px;
+            margin: 2px 0 6px 0;
+        }
+        #controls-panel label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+        }
+    </style>
+
+    <div id="controls-toggle" title="Impostazioni">&#9881;</div>
+    <div id="controls-panel" class="collapsed">
         <div>Offset X: <span id="model-x-offset-value">0.0 cm</span></div>
-        <input type="range" id="model-x-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
-        <div style="margin-top:4px;">Offset Y: <span id="model-y-offset-value">0.0 cm</span></div>
-        <input type="range" id="model-y-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
-        <div style="margin-top:4px;">Offset Z: <span id="model-z-offset-value">0.0 cm</span></div>
-        <input type="range" id="model-z-offset" min="-30" max="30" step="0.5" value="0" style="width:180px;">
-        <div style="margin-top:8px;">Scala: <span id="model-scale-value">1.00x</span></div>
-        <input type="range" id="model-scale" min="0.1" max="3.0" step="0.05" value="1.0" style="width:180px;">
-        <div style="margin-top:8px;">Det. FPS: <span id="detection-fps-value">120</span></div>
-        <input type="range" id="detection-fps" min="1" max="120" step="1" value="120" style="width:180px;">
-        <div style="margin-top:8px;">
+        <input type="range" id="model-x-offset" min="-30" max="30" step="0.5" value="0">
+        <div>Offset Y: <span id="model-y-offset-value">0.0 cm</span></div>
+        <input type="range" id="model-y-offset" min="-30" max="30" step="0.5" value="0">
+        <div>Offset Z: <span id="model-z-offset-value">0.0 cm</span></div>
+        <input type="range" id="model-z-offset" min="-30" max="30" step="0.5" value="0">
+        <div style="margin-top:4px;">Scala: <span id="model-scale-value">1.00x</span></div>
+        <input type="range" id="model-scale" min="0.1" max="3.0" step="0.05" value="1.0">
+        <div style="margin-top:4px;">Det. FPS: <span id="detection-fps-value">120</span></div>
+        <input type="range" id="detection-fps" min="1" max="120" step="1" value="120">
+        <div>
             <label><input type="checkbox" id="debug-overlay-toggle" checked> Debug Visivo</label>
         </div>
     </div>
+
+    <script>
+        // Toggle controls panel
+        document.getElementById('controls-toggle').addEventListener('click', function() {
+            document.getElementById('controls-panel').classList.toggle('collapsed');
+        });
+    </script>
 
 
     <!-- Libraries -->
@@ -146,7 +216,7 @@
 
     <script type="module">
         // cache-bust by appending version parameter (update when code changes)
-        import { RestorationEngine } from './utils/restoration-engine.js?v=19';
+        import { RestorationEngine } from './utils/restoration-engine.js?v=20';
 
         async function main() {
             const engine = new RestorationEngine();

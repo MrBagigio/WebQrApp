@@ -300,8 +300,14 @@ export class RestorationEngine {
         const w = this.overlay.width || 0;
         const h = this.overlay.height || 0;
 
+        // The FOV database stores LANDSCAPE horizontal FOV (the wider sensor dimension).
+        // The focal length in pixels (fx = fy for square pixels) is the same regardless
+        // of orientation — it's a physical property of the lens + sensor. We compute it
+        // from the LARGER image dimension which always corresponds to the landscape HFOV.
+        const maxDim = Math.max(w, h);
+
         // 1. Try hardware-reported FOV from MediaStream API
-        let estimated = this._getHardwareFocal(w);
+        let estimated = this._getHardwareFocal(maxDim);
 
         // 2. Fallback: device-specific FOV database (horizontal FOV in degrees)
         //    These are typical rear wide camera FOVs for popular devices.
@@ -318,32 +324,25 @@ export class RestorationEngine {
                 desktop:  60   // Desktop webcam
             };
             const hFov = fovDB[this._deviceProfile] || 68;
-            estimated = (w / 2) / Math.tan((hFov * Math.PI / 180) / 2);
-            this.log(`Focal from device DB (${this._deviceProfile}): HFOV=${hFov}° → f=${Math.round(estimated)}px`);
+            estimated = (maxDim / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+            this.log(`Focal from device DB (${this._deviceProfile}): HFOV=${hFov}° → f=${Math.round(estimated)}px (maxDim=${maxDim})`);
         }
 
-        // 3. Portrait mode correction: if video height > width, the horizontal
-        //    dimension is shorter so focal appears larger. Adjust for aspect.
-        if (h > w && this._isMobile) {
-            // In portrait the physical HFOV is narrower → focal is larger relative to width.
-            // But the camera sensor FOV stays the same; the width just maps to the shorter side.
-            // No special correction needed — FOV database already covers landscape.
-            // Just ensure we don't over-estimate in portrait.
-            const portraitFovGuess = (this._deviceProfile === 'iphone') ? 54 : 50;
-            const portraitFocal = (w / 2) / Math.tan((portraitFovGuess * Math.PI / 180) / 2);
-            estimated = Math.min(estimated, portraitFocal);
-            this.log(`Portrait mode correction: f=${Math.round(estimated)}px`);
+        // Portrait/landscape: focal_px is orientation-independent (square pixels).
+        // No separate portrait correction needed — using maxDim handles both cases.
+        if (h > w) {
+            this.log(`Portrait mode: w=${w} h=${h} focal=${Math.round(estimated)}px (HFOV=${(2*Math.atan(w/(2*estimated))*180/Math.PI).toFixed(1)}°, VFOV=${(2*Math.atan(h/(2*estimated))*180/Math.PI).toFixed(1)}°)`);
         }
 
-        // 4. Clamp to plausible range
-        const minF = Math.max(100, w * 0.45);
-        const maxF = Math.max(minF + 1, w * 1.6);
+        // 3. Clamp to plausible range (relative to maxDim, not just width)
+        const minF = Math.max(100, maxDim * 0.45);
+        const maxF = Math.max(minF + 1, maxDim * 1.6);
         this.focal = Math.max(minF, Math.min(maxF, estimated));
 
-        this.log(`Focale stimata: ${Math.round(this.focal)} px (w=${w}, h=${h}, device=${this._deviceProfile})`);
+        this.log(`Focale stimata: ${Math.round(this.focal)} px (w=${w}, h=${h}, maxDim=${maxDim}, device=${this._deviceProfile})`);
     }
 
-    _getHardwareFocal(width) {
+    _getHardwareFocal(refDim) {
         try {
             const track = this.video.srcObject?.getVideoTracks()[0];
             if (!track) return 0;
@@ -357,8 +356,10 @@ export class RestorationEngine {
                 return 0; // Let device database handle it
             }
 
-            const focal = (width / 2) / Math.tan((hFov * Math.PI / 180) / 2);
-            this.log(`Hardware FOV: ${hFov.toFixed(1)}° (${facingMode}) → f=${Math.round(focal)}px`);
+            // hFov from getSettings() is the FOV for the larger (landscape) dimension.
+            // refDim should be Math.max(w, h) to match.
+            const focal = (refDim / 2) / Math.tan((hFov * Math.PI / 180) / 2);
+            this.log(`Hardware FOV: ${hFov.toFixed(1)}° (${facingMode}) → f=${Math.round(focal)}px (refDim=${refDim})`);
             return focal;
         } catch (e) {
             this.log('FOV detect: ' + e.message, 'warn');
@@ -374,28 +375,52 @@ export class RestorationEngine {
 
     _syncProjection() {
         if (!this.overlay || !this.overlay.width || !this.overlay.height) return;
-        const w = this.overlay.width;
-        const h = this.overlay.height;
+        const bufW = this.overlay.width;
+        const bufH = this.overlay.height;
         const fx = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[0] : this.focal;
         const fy = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[4] : this.focal;
-        const cx = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[2] : (w / 2);
-        const cy = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[5] : (h / 2);
+        const cx0 = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[2] : (bufW / 2);
+        const cy0 = (this._cameraMatrix && this._cameraMatrix.length >= 9) ? this._cameraMatrix[5] : (bufH / 2);
         const near = 0.01, far = 100;
 
-        // OpenCV intrinsics → Three.js NDC projection (column-major)
+        const container = document.getElementById('three-container');
+        const cssW = (container && container.clientWidth)  || bufW;
+        const cssH = (container && container.clientHeight) || bufH;
+
+        // ── Account for CSS object-fit: cover crop ──────────────────────
+        // The overlay canvas (bufW×bufH) is displayed via object-fit: cover
+        // in a viewport of cssW×cssH. Cover scales the buffer uniformly to
+        // fill the viewport, cropping any overflow. We must build the
+        // Three.js projection for ONLY the visible portion of the buffer,
+        // otherwise the 3D model won't align with the video (especially in
+        // portrait mode where the aspect ratios differ greatly).
+        const scaleH = cssW / bufW;  // scale if fitting width
+        const scaleV = cssH / bufH;  // scale if fitting height
+        const coverScale = Math.max(scaleH, scaleV);
+
+        // Visible region in buffer pixel coordinates
+        const visW = cssW / coverScale;   // visible buffer width
+        const visH = cssH / coverScale;   // visible buffer height
+        const cropX = (bufW - visW) / 2;  // pixels cropped from left
+        const cropY = (bufH - visH) / 2;  // pixels cropped from top
+
+        // Shift principal point so it's relative to the visible region
+        const cx = cx0 - cropX;
+        const cy = cy0 - cropY;
+
+        // OpenCV intrinsics (cropped) → Three.js NDC projection
         const m = new THREE.Matrix4();
         m.set(
-            2 * fx / w,  0,            -(2 * cx / w - 1),  0,
-            0,           2 * fy / h,   -(2 * cy / h - 1),  0,
-            0,           0,            -(far + near) / (far - near), -2 * far * near / (far - near),
-            0,           0,            -1,                  0
+            2 * fx / visW,  0,              -(2 * cx / visW - 1),  0,
+            0,              2 * fy / visH,  -(2 * cy / visH - 1),  0,
+            0,              0,              -(far + near) / (far - near), -2 * far * near / (far - near),
+            0,              0,              -1,                     0
         );
         this.camera.projectionMatrix.copy(m);
         this.camera.projectionMatrixInverse.copy(m).invert();
 
-        const container = document.getElementById('three-container');
-        if (container && this.renderer) { // both needed for setSize
-            this.renderer.setSize(container.clientWidth, container.clientHeight);
+        if (container && this.renderer) {
+            this.renderer.setSize(cssW, cssH);
         }
     }
 
@@ -967,7 +992,26 @@ export class RestorationEngine {
         this.renderer.xr.enabled = true;
         container.appendChild(this.renderer.domElement);
 
-        window.addEventListener('resize', () => this._syncProjection());
+        // On resize / orientation change, re-sync projection (accounts for
+        // CSS cover crop changes) and re-check if video dimensions changed.
+        const _onResize = () => {
+            // If video dimensions changed (e.g. orientation change on Android),
+            // re-setup canvas and re-estimate focal length.
+            if (this.video && this.overlay &&
+                this.video.videoWidth > 0 &&
+                (this.overlay.width !== this.video.videoWidth ||
+                 this.overlay.height !== this.video.videoHeight)) {
+                this._setupCanvas();
+                this._estimateFocal();
+            }
+            this._syncProjection();
+        };
+        window.addEventListener('resize', _onResize);
+        // iOS fires orientationchange separately from resize
+        window.addEventListener('orientationchange', () => {
+            // Small delay: iOS needs time to update videoWidth/Height
+            setTimeout(_onResize, 300);
+        });
 
         // Scene
         this.scene = new THREE.Scene();
